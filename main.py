@@ -1,130 +1,102 @@
+"""MKV Organizer - Automatically organize and rename video files."""
+
+import argparse
 import os
-import re
 
-SEPARATORS = r'[-\s\.]'
-
-
-def handle(folder, language=True, dry_run=True):
-    parsed = dict()
-    for file_name in os.listdir(folder):
-        full_name = '/'.join([folder, file_name])
-        if os.path.isdir(full_name):
-            m = re.search(r'S\d+', file_name)
-            if m:
-                new_name = '/'.join([folder, m.group()])
-                if new_name != full_name:
-                    print('Renaming "{}" to "{}"...'.format(full_name, new_name))
-                    if not dry_run:
-                        os.rename(full_name, new_name)
-                        full_name = new_name
-
-            handle(full_name, dry_run=dry_run)
-        else:
-            ext = file_name.split('.')[-1]
-            name = '.'.join(file_name.split('.')[:-1])
-            pattern = '{separator}'.join([r'(?P<name>.*)',
-                                          r'[sS](?P<season>\d+)[eE](?P<episode>\d+)({separator}(?P<title>.*))?',
-                                          r'(?P<resolution>\d+[pP])({separator}(?P<source>.*))?',
-                                          r'(?P<rip>[xXhH]\.?26[45])',
-                                          r'(?P<group>.*)'])
-            pattern = pattern.format(separator=SEPARATORS)
-            match = re.match(pattern, name)
-            if not match:
-                raise ValueError('Cannot match %s', file_name)
-            sections = match.groupdict()
-            sections['folder'] = folder
-            sections['filename'] = '/'.join([folder, file_name])
-            parsed.setdefault(sections['season'], dict()).setdefault(sections['episode'], dict())[ext] = sections
-
-    organize(parsed, language=language, dry_run=dry_run)
-
-
-def organize(parsed, language=True, dry_run=True):
-    ret = dict()
-    for season, episodes in parsed.items():
-        for episode, files in episodes.items():
-            if 'mkv' in files:
-                rename(files, language=language, dry_run=dry_run)
-    return ret
-
-
-def rename(files, language=True, dry_run=True):
-    get_new_name(files, language=language)
-
-    for ext, definitions in files.items():
-        old = definitions['filename']
-        new = definitions['new_name']
-
-        if new != old:
-            print('Renaming "{}" to "{}"...'.format(old, new))
-            if not dry_run:
-                os.rename(old, new)
-
-
-def get_new_name(files, language=True):
-    sections = dict()
-    mkv = files['mkv']
-    for key, value in mkv.items():
-        if key != 'filename':
-            if not value:
-                value = get_value_from_subtitles(files, key)
-            sections[key] = capitalize(key, value)
-
-    parts = [sections['name'],
-             'S{}E{}'.format(sections['season'], sections['episode']),
-             sections['title'],
-             sections['resolution'],
-             sections['rip']]
-    parts = [p for p in parts if p]
-    new_name = '.'.join(parts)
-    new_name = '-'.join([new_name, sections['group']])
-
-    for ext, definitions in files.items():
-        fullname = new_name
-
-        if language and ext != 'mkv':
-            language = definitions['filename'].split('.')[-2]
-            if language in ['chs', 'cht', 'chs&eng', 'cht&eng', 'eng']:
-                fullname = '.'.join([new_name, language])
-
-        fullname = '.'.join([fullname, ext])
-
-        definitions['new_name'] = '/'.join([definitions['folder'], fullname])
-
-
-def get_value_from_subtitles(files, key):
-    for ext, sub in files.items():
-        if ext != 'mkv' and sub.get(key):
-            return sub[key]
-
-
-def capitalize(key, value):
-    if value:
-        words = []
-        for word in re.split(SEPARATORS, value):
-            if not re.match('\(\d+\)', word):  # Ignore stuff like '(1)'
-                if key == 'resolution':
-                    word = word.lower()
-                elif key in ['name', 'title']:
-                    if word.lower() in ['in', 'as', 'of']:
-                        word = word.lower()
-                    else:
-                        word = word.capitalize()
-                elif key == 'rip':
-                    if word.lower().startswith('x26'):
-                        word = word.lower()
-                    elif word.upper().startswith('H.'):
-                        word = word.upper()
-                words.append(word)
-        return '.'.join(words)
+from config import setup_logging
+from organizer import organize_files, rename_files
+from utils import get_logger
 
 
 def main():
-    folder = r"Y:\TV Shows\Marvel's Agents of S.H.I.E.L.D"
-    os.chdir(folder)
+    """Main entry point for MKV Organizer."""
+    parser = argparse.ArgumentParser(
+        description="Organize and rename video files with standardized naming scheme"
+    )
+    parser.add_argument(
+        "folder",
+        nargs="?",
+        help="Folder containing video files to organize",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=True,
+        help="Preview changes without modifying files (default: True)",
+    )
+    parser.add_argument(
+        "--commit",
+        action="store_true",
+        help="Actually rename files (overrides --dry-run)",
+    )
+    parser.add_argument(
+        "--no-language",
+        action="store_true",
+        help="Don't include language codes in subtitle filenames",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+    args = parser.parse_args()
 
-    handle(folder, language=True, dry_run=True)
+    # Setup logging globally for all modules
+    setup_logging(verbose=args.verbose)
+    logger = get_logger(__name__)
+
+    # Determine folder
+    if args.folder:
+        folder = args.folder
+    else:
+        raise ValueError("No folder specified. Please provide a folder as an argument.")
+
+    # Verify folder exists
+    if not os.path.isdir(folder):
+        logger.error(f"Folder not found: {folder}")
+        return 1
+
+    logger.info(f"Scanning folder: {folder}")
+
+    try:
+        # Organize files
+        organized = organize_files(folder)
+
+        if not organized:
+            logger.warning("No video files found to organize")
+            return 0
+
+        # Log statistics
+        total_episodes = sum(len(eps) for eps in organized.values())
+        total_files = sum(
+            len(files) for eps in organized.values() for files in eps.values()
+        )
+        logger.info(f"Found {total_episodes} episodes with {total_files} files")
+
+        # Determine dry_run mode
+        dry_run = not args.commit
+
+        # Rename files
+        include_language = not args.no_language
+        rename_files(
+            organized,
+            dry_run=dry_run,
+            include_language=include_language,
+        )
+
+        if dry_run:
+            logger.info("DRY RUN MODE - No files were actually renamed")
+            logger.info("Use --commit to actually rename files")
+        else:
+            logger.info("Files have been renamed successfully")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=args.verbose)
+        return 1
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    exit(main())
