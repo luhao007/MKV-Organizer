@@ -57,9 +57,12 @@ def extract_season_episode(
     if not match:
         return None, None, None
 
-    season = match.group("season").zfill(2)
-    episode = match.group("episode").zfill(2)
-    return season, episode, match
+    season = match.group("season_s") or match.group("season_x")
+    episode = match.group("episode_s") or match.group("episode_x")
+    if not season or not episode:
+        return None, None, None
+
+    return season.zfill(2), episode.zfill(2), match
 
 
 def extract_resolution(text: str) -> Optional[str]:

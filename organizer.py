@@ -44,7 +44,7 @@ def get_subtitle_language(filename: str) -> str:
     return ""
 
 
-def organize_files(folder: str) -> FileOrganization:
+def organize_files(folder: str, recursive: bool = False) -> FileOrganization:
     """
     Scan folder and organize files by season/episode.
 
@@ -64,7 +64,11 @@ def organize_files(folder: str) -> FileOrganization:
 
         # Skip directories
         if os.path.isdir(full_path):
-            logger.debug(f"Skipping directory: {filename}")
+            logger.debug(f"Entering directory: {filename}")
+            if recursive:
+                suborganized = organize_files(full_path, recursive=True)
+                for season, episodes in suborganized.items():
+                    organized.setdefault(season, {}).update(episodes)
             continue
 
         # Try to parse filename

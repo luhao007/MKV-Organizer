@@ -14,10 +14,14 @@ KNOWN_LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "zh"}
 # Regex Patterns
 # ============================================================================
 
-# Match SxxEyy pattern with separators (e.g., S01E10, s1e5, S01 E10)
-# Works with: dots, spaces, underscores, hyphens as separators
+# Match season/episode patterns with separators.
+# Supports both: S01E10 and 3x07
+# Works with dots, spaces, underscores, hyphens as separators.
 SEASON_EPISODE_PATTERN: Final = re.compile(
-    r"(?i)(?:^|[.\s_-])s(?P<season>\d{1,2})e(?P<episode>\d{2,3})(?:$|[.\s_-])"
+    r"(?i)(?:^|[.\s_-])(?:"
+    r"s(?P<season_s>\d{1,2})e(?P<episode_s>\d{2,3})|"
+    r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,3})"
+    r")(?:$|[.\s_-])"
 )
 
 # Match resolution (e.g., 1080p, 720p, 2160p)

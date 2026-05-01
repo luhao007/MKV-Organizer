@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pymediainfo import MediaInfo
+from pymediainfo import MediaInfo, Track
 
 from models import MediaMetadata
 from utils import get_logger
@@ -17,6 +17,7 @@ HEIGHT_TO_RESOLUTION = {
     576: "576p",
     480: "480p",
     320: "320p",
+    240: "240p",
 }
 
 
@@ -34,6 +35,7 @@ def get_resolution_from_height(height: int) -> str:
         return HEIGHT_TO_RESOLUTION[height]
 
     # Intelligent guessing for non-standard heights
+    logger.debug(f"Height {height} not in standard mapping, applying guessing")
     if height >= 2100:
         return "2160p"
     elif height >= 1000:
@@ -42,11 +44,15 @@ def get_resolution_from_height(height: int) -> str:
         return "720p"
     elif height >= 500:
         return "576p"
-    else:
+    elif height >= 400:
         return "480p"
+    elif height >= 300:
+        return "320p"
+    else:
+        return "240p"
 
 
-def extract_height(video_track) -> Optional[int]:
+def extract_height(video_track: Track) -> Optional[int]:
     """
     Extract video height from MediaInfo track.
 
@@ -67,7 +73,7 @@ def extract_height(video_track) -> Optional[int]:
     return None
 
 
-def guess_codec_from_format(fmt: str, codec: str) -> str:
+def guess_codec_from_format(fmt: str, fmt_ver: str, codec: str) -> str:
     """
     Guess video codec from format/codec fields.
 
@@ -79,6 +85,7 @@ def guess_codec_from_format(fmt: str, codec: str) -> str:
     - DivX -> DivX
     """
     fmt_lower = fmt.lower() if fmt else ""
+    fmt_ver_lower = fmt_ver.lower() if fmt_ver else ""
     codec_lower = codec.lower() if codec else ""
 
     combined = fmt_lower + codec_lower
@@ -100,11 +107,20 @@ def guess_codec_from_format(fmt: str, codec: str) -> str:
         return "XviD"
 
     # DivX
-    if "divx" in codec_lower:
+    if (
+        "divx" in codec_lower
+        or codec_lower.startswith("dx")
+        or fmt_lower.startswith("divx")
+    ):
         return "DivX"
 
-    # Unknown - return original if available
-    return fmt if fmt else ""
+    # MPEG-1:
+    if "mpeg" in combined and "1" in fmt_ver_lower:
+        return "MPEG-1"
+
+    raise ValueError(
+        f"Unknown codec for format='{fmt}', format_version='{fmt_ver}', codec='{codec}'"
+    )
 
 
 def extract_media_info(video_path: str) -> MediaMetadata:
@@ -145,15 +161,23 @@ def extract_media_info(video_path: str) -> MediaMetadata:
 
     # Extract codec
     fmt = getattr(video_track, "format", "") or ""
+    fmt_ver = getattr(video_track, "format_version", "") or ""
     codec_id = getattr(video_track, "codec_id", "") or ""
     codec_id_hint = getattr(video_track, "codec_id_hint", "") or ""
     codec_field = getattr(video_track, "codec", "") or ""
 
-    codec = guess_codec_from_format(fmt, codec_id or codec_id_hint or codec_field)
-    if codec:
+    try:
+        codec = guess_codec_from_format(
+            fmt, fmt_ver, codec_id or codec_id_hint or codec_field
+        )
         metadata.codec = codec
         logger.debug(f"Extracted codec: {metadata.codec}")
-    else:
-        logger.debug(f"Could not extract codec from {video_path}")
+    except ValueError:
+        logger.warning(
+            f"Failed to guess codec for {video_path}: fmt={fmt},"
+            f" format_version={fmt_ver}, codec_id={codec_id},"
+            f" codec_id_hint={codec_id_hint}, codec={codec_field}"
+        )
+        metadata.codec = ""
 
     return metadata

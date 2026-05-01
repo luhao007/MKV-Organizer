@@ -40,6 +40,12 @@ def main():
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "-r",
+        "--recursive",
+        action="store_true",
+        help="Recursively scan subdirectories for video files",
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -61,7 +67,7 @@ def main():
 
     try:
         # Organize files
-        organized = organize_files(folder)
+        organized = organize_files(folder, recursive=args.recursive)
 
         if not organized:
             logger.warning("No video files found to organize")
