@@ -9,6 +9,8 @@ from config import (
     RELEASE_GROUP_PATTERN,
     RESOLUTION_PATTERN,
     SEASON_EPISODE_PATTERN,
+    SOURCE_PATTERN,
+    TITLE_METADATA_SUFFIX_PATTERN,
 )
 from models import ParsedFileInfo
 from utils import get_logger
@@ -30,6 +32,26 @@ def normalize_separators(text: str) -> str:
     return text.strip()
 
 
+def strip_noise_prefix(stem: str) -> str:
+    """Remove common noise prefixes like 'Rename:' from filenames."""
+    return re.sub(
+        r"^(?:rename|renamed|download|new)\s*:\s*", "", stem, flags=re.IGNORECASE
+    ).strip()
+
+
+def strip_trailing_metadata(text: str) -> str:
+    """Remove trailing metadata tags from extracted titles."""
+    if not text:
+        return ""
+
+    stripped = text.strip(" ._- ")
+    match = TITLE_METADATA_SUFFIX_PATTERN.match(stripped)
+    if match:
+        return match.group("title").strip(" ._- ")
+
+    return stripped
+
+
 def extract_release_group(stem: str) -> Optional[str]:
     """
     Extract release group from filename.
@@ -43,26 +65,41 @@ def extract_release_group(stem: str) -> Optional[str]:
     return None
 
 
-def extract_season_episode(
-    text: str,
-) -> tuple[Optional[str], Optional[str], Optional[re.Match[str]]]:
+def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     """
     Extract season and episode numbers.
 
     Returns:
-        Tuple of (season_str, episode_str, match_object)
+        Tuple of (season_str, episode_str, left_text, right_text)
         Season/episode are zero-padded to 2 digits if found.
     """
     match = SEASON_EPISODE_PATTERN.search(text)
     if not match:
-        return None, None, None
+        raise ValueError("No season/episode pattern found")
 
     season = match.group("season_s") or match.group("season_x")
     episode = match.group("episode_s") or match.group("episode_x")
     if not season or not episode:
-        return None, None, None
+        raise ValueError("No season/episode pattern found")
 
-    return season.zfill(2), episode.zfill(2), match
+    left = text[: match.start()]
+    right = text[match.end() :]
+
+    return season.zfill(2), episode.zfill(2), left, right
+
+
+def extract_through_pattern(
+    pattern: re.Pattern[str], text: str
+) -> Optional[tuple[str, str]]:
+    """Extract a value using the provided regex pattern."""
+    match = pattern.search(text)
+    if match:
+        res = match.group(1)
+        left = text[: match.start()].strip(" ._-")
+        right = text[match.end() :].strip(" ._-")
+        remaining = ".".join([left, right]) if left and right else left or right
+        return res, remaining
+    return None
 
 
 def extract_resolution(text: str) -> Optional[str]:
@@ -70,14 +107,6 @@ def extract_resolution(text: str) -> Optional[str]:
     match = RESOLUTION_PATTERN.search(text)
     if match:
         return match.group("res").lower()
-    return None
-
-
-def extract_codec(text: str) -> Optional[str]:
-    """Extract video codec (e.g., x265, x264, AV1)."""
-    match = CODEC_PATTERN.search(text)
-    if match:
-        return match.group("codec")
     return None
 
 
@@ -104,37 +133,53 @@ def parse_filename(filename: str) -> ParsedFileInfo:
     stem = path.stem
     extension = path.suffix.lstrip(".").lower()
 
+    # Remove common noise prefixes that are not part of the title
+    stem = strip_noise_prefix(stem)
+
     # Try to extract release group first (usually at the end)
     release_group = extract_release_group(stem)
     if release_group:
         logger.debug(f"Found release group: {release_group}")
-        stem_without_group = stem[: -(len(release_group) + 1)]
+        stem = stem[: -(len(release_group) + 1)]
     else:
-        stem_without_group = stem
+        stem = stem
 
     # Extract season and episode
-    season, episode, se_match = extract_season_episode(stem_without_group)
-    if not season or not episode or not se_match:
-        logger.debug(f"No SxxEyy pattern found in: {filename}")
-        raise ValueError(f"Cannot find SxxEyy pattern in {filename}")
-
+    season, episode, left_text, right_text = extract_season_episode(stem)
     logger.debug(f"Found season: {season}, episode: {episode}")
 
     # Extract show name (everything before SxxEyy)
-    left_text = stem_without_group[: se_match.start()].strip(" ._-")
     show_name = normalize_separators(left_text)
 
-    # Extract title (everything after SxxEyy)
-    right_text = stem_without_group[se_match.end() :].strip(" ._-")
-    title = normalize_separators(right_text)
+    # Extract resolution
+    res = extract_through_pattern(RESOLUTION_PATTERN, right_text)
+    if res:
+        resolution, right_text = res
+    else:
+        resolution = ""
 
-    # Extract resolution and codec
-    resolution = extract_resolution(stem_without_group)
-    codec = extract_codec(stem_without_group)
+    # Extract codec
+    res = extract_through_pattern(CODEC_PATTERN, right_text)
+    if res:
+        codec, right_text = res
+    else:
+        codec = ""
+
+    # Extract source
+    res = extract_through_pattern(SOURCE_PATTERN, right_text)
+    if res:
+        source, right_text = res
+    else:
+        source = ""
+
+    # Extract title directly
+    title = strip_trailing_metadata(right_text)
+    extra = right_text.replace(title, "").strip(" ._-")
+    title = normalize_separators(title)
 
     logger.debug(
         f"Extracted: show={show_name}, title={title}, "
-        f"resolution={resolution}, codec={codec}"
+        f"resolution={resolution}, codec={codec}, source={source}, extra={extra}"
     )
 
     return ParsedFileInfo(
@@ -143,8 +188,10 @@ def parse_filename(filename: str) -> ParsedFileInfo:
         episode=episode,
         title=title,
         resolution=resolution or "",
-        codec=codec or "",
+        codec=codec,
+        extra=extra or "",
         release_group=release_group or "",
         extension=extension,
         original_filename=filename,
+        source=source or "",
     )

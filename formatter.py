@@ -1,6 +1,12 @@
 """Format and capitalize video filenames according to naming conventions."""
 
-from config import STOPWORDS, WORD_SPLIT_PATTERN, WRAP_PATTERN
+from config import (
+    KNOWN_CODECS,
+    KNOWN_SOURCES,
+    STOPWORDS,
+    WORD_SPLIT_PATTERN,
+    WRAP_PATTERN,
+)
 
 
 def capitalize_word(word: str, is_first: bool = False) -> str:
@@ -38,6 +44,10 @@ def capitalize_word(word: str, is_first: bool = False) -> str:
     # Apply stopword rules
     if not is_first and core_lower in STOPWORDS:
         return prefix + core_lower + suffix
+
+    # Preserve acronyms and tokens containing digits (e.g. HDTV, DD5.1)
+    if core.isupper() or any(char.isdigit() for char in core):
+        return prefix + core + suffix
 
     # Capitalize first letter
     capitalized = (
@@ -103,18 +113,29 @@ def format_codec(codec: str) -> str:
     if not codec:
         return ""
 
-    codec_lower = codec.lower()
+    for known in KNOWN_CODECS:
+        if codec.lower() == known.lower():
+            return known
 
-    # x264/x265 variants
-    if codec_lower.startswith("x26"):
-        return codec_lower
-
-    # H.264/H.265 variants
-    if codec_lower.startswith("h.") or codec_lower.startswith("h265"):
-        return codec.upper()
-
-    # Other codecs (AV1, XviD, DivX, etc.)
     return codec
+
+
+def format_source(source: str) -> str:
+    """
+    Format source string according to conventions.
+
+    Examples:
+        "WEB-DL" -> "WEB-DL"
+        "BluRay" -> "BluRay"
+    """
+    if not source:
+        return ""
+
+    for known in KNOWN_SOURCES:
+        if source.lower() == known.lower():
+            return known
+
+    return source
 
 
 def format_show_name(show_name: str) -> str:
@@ -129,6 +150,8 @@ def build_filename(
     title: str,
     resolution: str = "",
     codec: str = "",
+    source: str = "",
+    extra: str = "",
     release_group: str = "",
 ) -> str:
     """
@@ -153,14 +176,16 @@ def build_filename(
     formatted_title = format_title(title)
     formatted_resolution = format_resolution(resolution)
     formatted_codec = format_codec(codec)
-
+    formatted_source = format_source(source)
     # Build parts list (skip empty parts)
     parts = [
         formatted_show,
         f"S{season}E{episode}",
         formatted_title,
         formatted_resolution,
+        formatted_source,
         formatted_codec,
+        extra,
     ]
     parts = [p for p in parts if p]
 

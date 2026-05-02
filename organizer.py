@@ -1,12 +1,13 @@
 """Organize and rename video files."""
 
 import os
+import traceback
 from formatter import build_filename
 from parser import parse_filename
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from config import KNOWN_LANGUAGES, VIDEO_FORMATS
+from config import EPISODE_NAME_FILE, KNOWN_LANGUAGES, VIDEO_FORMATS
 from media_info import extract_media_info
 from models import FileDefinition
 from utils import get_logger
@@ -44,7 +45,71 @@ def get_subtitle_language(filename: str) -> str:
     return ""
 
 
-def organize_files(folder: str, recursive: bool = False) -> FileOrganization:
+def load_episode_name_index(folder: str) -> Dict[str, str]:
+    index_path = Path(folder) / EPISODE_NAME_FILE
+    if not index_path.exists():
+        return {}
+
+    index: Dict[str, str] = {}
+    with index_path.open("r", encoding="utf-8") as file:
+        show_name = file.readline().strip()  # First line is show name
+        index["name"] = show_name
+
+        for line in file.readlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            parts = line.split("|", 2)
+            if len(parts) != 3:
+                continue
+
+            season, episode, title = [part.strip() for part in parts]
+            if not season or not episode or not title:
+                continue
+
+            key = f"{season}|{episode}"
+            index[key] = title
+
+    return index
+
+
+def write_episode_name_index(folder: str, organized: FileOrganization) -> str:
+    index_path = Path(folder) / EPISODE_NAME_FILE
+    mappings: Dict[str, str] = {}
+
+    show_name = ""
+    for season, episodes in organized.items():
+        for episode, episode_files in episodes.items():
+            try:
+                primary = get_primary_video_file(episode_files)
+            except ValueError:
+                continue
+
+            parsed = primary.parsed
+            if not parsed.title:
+                continue
+
+            key = f"{parsed.season}|{parsed.episode}"
+            mappings[key] = parsed.title
+            if not show_name:
+                show_name = parsed.show_name
+
+    with index_path.open("w", encoding="utf-8") as file:
+        file.write(show_name)
+        file.write("\n")
+        for key in sorted(mappings):
+            season, episode = key.split("|", 2)
+            file.write(f"{season}|{episode}|{mappings[key]}\n")
+
+    return str(index_path)
+
+
+def organize_files(
+    folder: str,
+    recursive: bool = False,
+    episode_name_index: Optional[Dict[str, str]] = None,
+) -> FileOrganization:
     """
     Scan folder and organize files by season/episode.
 
@@ -60,13 +125,17 @@ def organize_files(folder: str, recursive: bool = False) -> FileOrganization:
     skipped_count = 0
 
     for filename in os.listdir(folder):
+        if filename == EPISODE_NAME_FILE:
+            continue
         full_path = os.path.join(folder, filename)
 
         # Skip directories
         if os.path.isdir(full_path):
             logger.debug(f"Entering directory: {filename}")
             if recursive:
-                suborganized = organize_files(full_path, recursive=True)
+                suborganized = organize_files(
+                    full_path, recursive=True, episode_name_index=episode_name_index
+                )
                 for season, episodes in suborganized.items():
                     organized.setdefault(season, {}).update(episodes)
             continue
@@ -76,9 +145,17 @@ def organize_files(folder: str, recursive: bool = False) -> FileOrganization:
             parsed = parse_filename(filename)
             parsed_count += 1
         except ValueError as e:
-            logger.debug(f"Skipping {filename}: {e}")
+            logger.error(f"Skipping {filename}: {e}")
+            traceback.print_exc()
             skipped_count += 1
             continue
+
+        if episode_name_index:
+            if "name" in episode_name_index:
+                parsed.show_name = episode_name_index["name"]
+            key = f"{parsed.season}|{parsed.episode}"
+            if key in episode_name_index:
+                parsed.title = episode_name_index[key]
 
         # Create FileDefinition
         file_def = FileDefinition(
@@ -182,6 +259,8 @@ def build_new_filename(
         title=parsed.title,
         resolution=parsed.resolution,
         codec=parsed.codec,
+        source=parsed.source,
+        extra=parsed.extra,
         release_group=parsed.release_group,
     )
 

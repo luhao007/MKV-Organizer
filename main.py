@@ -4,7 +4,12 @@ import argparse
 import os
 
 from config import setup_logging
-from organizer import organize_files, rename_files
+from organizer import (
+    load_episode_name_index,
+    organize_files,
+    rename_files,
+    write_episode_name_index,
+)
 from utils import get_logger
 
 
@@ -19,12 +24,14 @@ def main():
         help="Folder containing video files to organize",
     )
     parser.add_argument(
+        "-d",
         "--dry-run",
         action="store_true",
         default=True,
         help="Preview changes without modifying files (default: True)",
     )
     parser.add_argument(
+        "-c",
         "--commit",
         action="store_true",
         help="Actually rename files (overrides --dry-run)",
@@ -46,6 +53,18 @@ def main():
         action="store_true",
         help="Recursively scan subdirectories for video files",
     )
+    parser.add_argument(
+        "-e",
+        "--export-episode-names",
+        action="store_true",
+        help="Export parsed episode names to episode_names.txt in the target folder",
+    )
+    parser.add_argument(
+        "-u",
+        "--use-episode-names",
+        action="store_true",
+        help="Use stored episode_names.txt mappings to fill or override parsed titles",
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -66,8 +85,17 @@ def main():
     logger.info(f"Scanning folder: {folder}")
 
     try:
+        # Load existing episode name mappings when requested
+        episode_name_index = None
+        if args.use_episode_names:
+            episode_name_index = load_episode_name_index(folder)
+
         # Organize files
-        organized = organize_files(folder, recursive=args.recursive)
+        organized = organize_files(
+            folder,
+            recursive=args.recursive,
+            episode_name_index=episode_name_index,
+        )
 
         if not organized:
             logger.warning("No video files found to organize")
@@ -90,6 +118,10 @@ def main():
             dry_run=dry_run,
             include_language=include_language,
         )
+
+        if args.export_episode_names:
+            index_file = write_episode_name_index(folder, organized)
+            logger.info(f"Exported episode names to: {index_file}")
 
         if dry_run:
             logger.info("DRY RUN MODE - No files were actually renamed")

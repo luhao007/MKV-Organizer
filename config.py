@@ -27,10 +27,43 @@ SEASON_EPISODE_PATTERN: Final = re.compile(
 # Match resolution (e.g., 1080p, 720p, 2160p)
 RESOLUTION_PATTERN: Final = re.compile(r"(?i)(?<!\d)(?P<res>\d{3,4}p)(?!\d)")
 
-# Match video codec (x264, x265, H.264, HEVC, AV1, XviD, DivX, MPEG-4)
-CODEC_PATTERN: Final = re.compile(
-    r"(?i)\b(?P<codec>x26[45]|h\.?26[45]|hevc|avc|xvid|divx|mpeg-?4|av1)\b"
-)
+KNOWN_CODECS = [
+    "x264",
+    "H264",
+    "H.264",
+    "AVC",
+    "x265",
+    "H265",
+    "H.265",
+    "HEVC",
+    "AV1",
+    "XviD",
+    "DivX",
+    "MPEG-4",
+    "MPEG-1",
+    "MPEG-2",
+]
+
+_CODEC_PATTERN: Final = "|".join(KNOWN_CODECS)
+CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<codec>{_CODEC_PATTERN})\b")
+
+KNOWN_SOURCES = [
+    "HDTV",
+    "TVRip",
+    "WEBDL",
+    "WEB.DL",
+    "WEB-DL",
+    "WEB_DL",
+    "WEBRip",
+    "BluRay",
+    "BDRip",
+    "BRRip",
+    "DVD",
+    "DVDRip",
+]
+
+_SOURCE_PATTERN: Final = "|".join(KNOWN_SOURCES)
+SOURCE_PATTERN: Final = re.compile(rf"(?i)\b(?P<source>{_SOURCE_PATTERN})\b")
 
 # For capitalization - split on dots, spaces, underscores, hyphens
 WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_-]+")
@@ -40,6 +73,20 @@ WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")
 
 # Stopwords for title capitalization (keep lowercase except first word)
 STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
+
+# Metadata suffixes that are not part of the episode title.
+TITLE_METADATA_SUFFIX_PATTERN: Final = re.compile(
+    r"(?i)^(?P<title>.*?)(?:[.\s_-]*(?:"
+    r"\d{3,4}p|"
+    f"{_CODEC_PATTERN}|"
+    f"{_SOURCE_PATTERN}|"
+    r"HDR|HDR10|HDR10\+|"
+    r"DD5\.1|DDP5\.1|DD2\.0|DDP|AC3|AAC|DTS|DTS[-_.]?HD|Atmos|"
+    r"PROPER|REMUX|REPACK|LIMITED)(?:[.\s_-]*))*$"
+)
+
+# Default filename for stored episode title mappings.
+EPISODE_NAME_FILE: Final = "episode_names.txt"
 
 # Release group pattern (trailing text after last hyphen)
 # E.g., "...-RARBG", "...-DEFLATE", "...-GROUP_NAME"
