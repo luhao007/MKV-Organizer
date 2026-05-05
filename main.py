@@ -5,6 +5,8 @@ import os
 
 from config import setup_logging
 from organizer import (
+    check_low_resolution,
+    check_missing,
     load_episode_name_index,
     organize_files,
     rename_files,
@@ -65,6 +67,22 @@ def main():
         action="store_true",
         help="Use stored episode_names.txt mappings to fill or override parsed titles",
     )
+    parser.add_argument(
+        "--check-missing",
+        action="store_true",
+        help=(
+            "Check for episodes in episode_names.txt that are missing from the folder,"
+            " must be used with --use-episode-names"
+        ),
+    )
+    parser.add_argument(
+        "--check-low-resolution",
+        type=int,
+        default=1080,
+        help=(
+            "Resolution threshold (e.g. 1080) to check for episodes with low resolution"
+        ),
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -113,21 +131,31 @@ def main():
 
         # Rename files
         include_language = not args.no_language
-        rename_files(
+        ren_count = rename_files(
             organized,
             dry_run=dry_run,
             include_language=include_language,
         )
 
+        if dry_run:
+            logger.info(f"DRY RUN MODE - No files would be renamed")
+            logger.info("Use --commit or -c to actually rename files")
+        elif ren_count > 0:
+            logger.info(f"{ren_count} files have been renamed successfully")
+        else:
+            logger.info("All files are sorted. No files needed to be renamed")
+
         if args.export_episode_names:
             index_file = write_episode_name_index(folder, organized)
             logger.info(f"Exported episode names to: {index_file}")
 
-        if dry_run:
-            logger.info("DRY RUN MODE - No files were actually renamed")
-            logger.info("Use --commit to actually rename files")
-        else:
-            logger.info("Files have been renamed successfully")
+        if args.check_missing and episode_name_index is not None:
+            check_missing(organized, episode_name_index)
+
+        if args.check_low_resolution:
+            check_low_resolution(
+                organized, resolution_threshold=args.check_low_resolution
+            )
 
         return 0
 

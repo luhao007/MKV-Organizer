@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Optional
 
 from config import (
+    AUDIO_CODEC_PATTERN,
     CODEC_PATTERN,
+    LANGUAGE_PATTERN,
     RELEASE_GROUP_PATTERN,
     RESOLUTION_PATTERN,
     SEASON_EPISODE_PATTERN,
@@ -88,9 +90,7 @@ def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     return season.zfill(2), episode.zfill(2), left, right
 
 
-def extract_through_pattern(
-    pattern: re.Pattern[str], text: str
-) -> Optional[tuple[str, str]]:
+def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, str]:
     """Extract a value using the provided regex pattern."""
     match = pattern.search(text)
     if match:
@@ -99,7 +99,7 @@ def extract_through_pattern(
         right = text[match.end() :].strip(" ._-")
         remaining = ".".join([left, right]) if left and right else left or right
         return res, remaining
-    return None
+    return "", text
 
 
 def extract_resolution(text: str) -> Optional[str]:
@@ -128,6 +128,7 @@ def parse_filename(filename: str) -> ParsedFileInfo:
         ValueError: If filename doesn't contain season/episode pattern.
     """
     logger.debug(f"Parsing filename: {filename}")
+    filename = filename.replace(" ", ".")
 
     path = Path(filename)
     stem = path.stem
@@ -137,49 +138,39 @@ def parse_filename(filename: str) -> ParsedFileInfo:
     stem = strip_noise_prefix(stem)
 
     # Try to extract release group first (usually at the end)
-    release_group = extract_release_group(stem)
-    if release_group:
-        logger.debug(f"Found release group: {release_group}")
-        stem = stem[: -(len(release_group) + 1)]
-    else:
-        stem = stem
+    release_group, stem = extract_through_pattern(RELEASE_GROUP_PATTERN, stem)
 
     # Extract season and episode
-    season, episode, left_text, right_text = extract_season_episode(stem)
+    season, episode, show_name, unparsed = extract_season_episode(stem)
     logger.debug(f"Found season: {season}, episode: {episode}")
 
     # Extract show name (everything before SxxEyy)
-    show_name = normalize_separators(left_text)
+    show_name = normalize_separators(show_name)
 
     # Extract resolution
-    res = extract_through_pattern(RESOLUTION_PATTERN, right_text)
-    if res:
-        resolution, right_text = res
-    else:
-        resolution = ""
+    resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
 
     # Extract codec
-    res = extract_through_pattern(CODEC_PATTERN, right_text)
-    if res:
-        codec, right_text = res
-    else:
-        codec = ""
+    codec, unparsed = extract_through_pattern(CODEC_PATTERN, unparsed)
 
     # Extract source
-    res = extract_through_pattern(SOURCE_PATTERN, right_text)
-    if res:
-        source, right_text = res
-    else:
-        source = ""
+    source, unparsed = extract_through_pattern(SOURCE_PATTERN, unparsed)
+
+    # Extract audio codec
+    audio_codec, unparsed = extract_through_pattern(AUDIO_CODEC_PATTERN, unparsed)
+
+    # Extract language
+    lang, unparsed = extract_through_pattern(LANGUAGE_PATTERN, unparsed)
 
     # Extract title directly
-    title = strip_trailing_metadata(right_text)
-    extra = right_text.replace(title, "").strip(" ._-")
+    title = strip_trailing_metadata(unparsed)
+    unparsed = unparsed.replace(title, "").strip(" ._-")
     title = normalize_separators(title)
 
     logger.debug(
-        f"Extracted: show={show_name}, title={title}, "
-        f"resolution={resolution}, codec={codec}, source={source}, extra={extra}"
+        f"Extracted: show={show_name}, title={title}, resolution={resolution},"
+        f" codec={codec}, source={source}, audio_codec={audio_codec}, lang={lang},"
+        f" extra={unparsed}"
     )
 
     return ParsedFileInfo(
@@ -187,9 +178,11 @@ def parse_filename(filename: str) -> ParsedFileInfo:
         season=season,
         episode=episode,
         title=title,
-        resolution=resolution or "",
+        resolution=resolution,
         codec=codec,
-        extra=extra or "",
+        audio_codec=audio_codec,
+        lang=lang,
+        extra=unparsed,
         release_group=release_group or "",
         extension=extension,
         original_filename=filename,

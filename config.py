@@ -5,11 +5,11 @@ import re
 from typing import Final
 
 # Supported video formats
-VIDEO_FORMATS: Final = ["mkv", "mp4", "avi"]
+VIDEO_FORMATS: Final = ["mkv", "mp4", "avi", "ts", "mpeg", "mpg", "mov", "wmv"]
 
 # Supported subtitle formats and languages
 SUBTITLE_FORMATS: Final = ["srt", "ass", "ssa", "sub"]
-KNOWN_LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "zh"}
+KNOWN_LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "fra", "zh", "en"}
 
 # Regex Patterns
 # ============================================================================
@@ -50,10 +50,10 @@ CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<codec>{_CODEC_PATTERN})\b")
 KNOWN_SOURCES = [
     "HDTV",
     "TVRip",
-    "WEBDL",
+    "AMZN.WEB-DL",
+    "CRVE.WEB-DL",
     "WEB.DL",
     "WEB-DL",
-    "WEB_DL",
     "WEBRip",
     "BluRay",
     "BDRip",
@@ -64,6 +64,36 @@ KNOWN_SOURCES = [
 
 _SOURCE_PATTERN: Final = "|".join(KNOWN_SOURCES)
 SOURCE_PATTERN: Final = re.compile(rf"(?i)\b(?P<source>{_SOURCE_PATTERN})\b")
+
+KNOWN_AUDIO_CODECS = [
+    "AC3",
+    "AAC",
+    "DD5.1",
+    "DD2.0",
+    "DD.2.0",
+    "DDP",
+    "DDP5.1",
+    "DDP.5.1",
+    "DTS",
+    "DTS-HD",
+    "DTS-HD.MA",
+    "TrueHD",
+    "TrueHD.7.1",
+    "Atmos",
+]
+
+
+# 重要：把 codec 先按长度从长到短排序，避免 "DTS" 抢先匹配 "DTS-HD.MA"
+_audio_alts = "|".join(
+    sorted(map(re.escape, KNOWN_AUDIO_CODECS), key=len, reverse=True)
+)
+
+_AUDIO_CODEC_PATTERN: Final = rf"({_audio_alts})(\.({_audio_alts}))*"
+AUDIO_CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<audio>{_AUDIO_CODEC_PATTERN})\b")
+
+_LANGUAGE_PATTERN: Final = "|".join(KNOWN_LANGUAGES)
+_LANGUAGE_PATTERN_REPEATED: Final = rf"({_LANGUAGE_PATTERN})(\.({_LANGUAGE_PATTERN}))*"
+LANGUAGE_PATTERN: Final = re.compile(rf"(?i)\b(?P<lang>{_LANGUAGE_PATTERN_REPEATED})\b")
 
 # For capitalization - split on dots, spaces, underscores, hyphens
 WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_-]+")
@@ -80,8 +110,9 @@ TITLE_METADATA_SUFFIX_PATTERN: Final = re.compile(
     r"\d{3,4}p|"
     f"{_CODEC_PATTERN}|"
     f"{_SOURCE_PATTERN}|"
+    f"{_AUDIO_CODEC_PATTERN}|"
+    f"{_LANGUAGE_PATTERN}|"
     r"HDR|HDR10|HDR10\+|"
-    r"DD5\.1|DDP5\.1|DD2\.0|DDP|AC3|AAC|DTS|DTS[-_.]?HD|Atmos|"
     r"PROPER|REMUX|REPACK|LIMITED)(?:[.\s_-]*))*$"
 )
 

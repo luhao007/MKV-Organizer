@@ -5,11 +5,7 @@ Run this script to see how the new modular structure works:
     python examples.py
 """
 
-from formatter import build_filename, format_title
 from parser import parse_filename
-
-from media_info import MediaMetadata
-from models import ParsedFileInfo
 
 
 def example_parsing():
@@ -22,124 +18,24 @@ def example_parsing():
         "Better.Call.Saul.S01E10.Marco.1080p.X265.x265-RARBG.mp4",
         "Air.Crash.Investigations.S01E01.Unlocking.Disaster.(United.Airlines).avi",
         "The.Office.S09E23.Finale.720p.x264-GROUP.mkv",
+        "Mayday.S26E10.Mixed.Measures.2160P.CRVE.WEB-DL.H265.DDP.5.1.ENG.FRA-NS225.mkv",
+        "Mayday S03E10 Head on Collision 1080p AMZN WEB-DL DD 2 0 H 264-playWEB.mkv",
     ]
 
     for filename in test_filenames:
         try:
             info = parse_filename(filename)
             print(f"\nFile: {filename}")
-            print(f"  Show: {info.show_name}")
-            print(f"  Season: S{info.season}, Episode: E{info.episode}")
-            print(f"  Title: {info.title}")
-            print(f"  Resolution: {info.resolution}")
-            print(f"  Codec: {info.codec}")
-            print(f"  Group: {info.release_group or '(none)'}")
+            for key, value in info.__dict__.items():
+                print(f"  {key}: {value}")
         except ValueError as e:
             print(f"\n✗ {filename}: {e}")
 
 
-def example_formatting():
-    """Example 2: Title formatting with capitalization."""
-    print("\n" + "=" * 60)
-    print("EXAMPLE 2: Title Formatting & Capitalization")
-    print("=" * 60)
-
-    test_titles = [
-        "the call of duty",
-        "unlocking disaster (united airlines, flight 811)",
-        "marco - the final confrontation",
-        "a tale of two cities",
-    ]
-
-    for title in test_titles:
-        formatted = format_title(title)
-        print(f"\nOriginal: {title}")
-        print(f"Formatted: {formatted}")
-
-
-def example_building_filenames():
-    """Example 3: Building standardized filenames."""
-    print("\n" + "=" * 60)
-    print("EXAMPLE 3: Building Standardized Filenames")
-    print("=" * 60)
-
-    examples = [
-        {
-            "show_name": "Better Call Saul",
-            "season": "01",
-            "episode": "10",
-            "title": "Marco",
-            "resolution": "1080p",
-            "codec": "x265",
-            "release_group": "RARBG",
-        },
-        {
-            "show_name": "Air Crash Investigations",
-            "season": "01",
-            "episode": "01",
-            "title": "Unlocking Disaster (United Airlines, Flight 811)",
-            "resolution": "720p",
-            "codec": "x264",
-            "release_group": "",
-        },
-        {
-            "show_name": "The Office",
-            "season": "09",
-            "episode": "23",
-            "title": "Finale",
-            "resolution": "",  # Will be missing
-            "codec": "",  # Will be missing
-            "release_group": "GROUP",
-        },
-    ]
-
-    for i, example in enumerate(examples, 1):
-        filename = build_filename(**example)
-        print(f"\nExample {i}:")
-        print(f"  Input: {example}")
-        print(f"  Output: {filename}.mkv")
-
-
-def example_data_models():
-    """Example 4: Using data models for type safety."""
-    print("\n" + "=" * 60)
-    print("EXAMPLE 4: Type-Safe Data Models")
-    print("=" * 60)
-
-    # Create a ParsedFileInfo instance
-    info = ParsedFileInfo(
-        show_name="Better Call Saul",
-        season="01",
-        episode="10",
-        title="Marco",
-        resolution="1080p",
-        codec="x265",
-        release_group="RARBG",
-        extension="mp4",
-        original_filename="Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4",
-    )
-
-    print(f"\nParsedFileInfo instance:")
-    print(f"  Show: {info.show_name}")
-    print(f"  Season/Episode: S{info.season}E{info.episode}")
-    print(f"  Title: {info.title}")
-    print(f"  Quality: {info.resolution} @ {info.codec}")
-    print(f"  Group: {info.release_group}")
-
-    # Create media metadata
-    media = MediaMetadata(
-        resolution="1080p",
-        codec="x265",
-    )
-    print(f"\nMediaMetadata instance:")
-    print(f"  Resolution: {media.resolution}")
-    print(f"  Codec: {media.codec}")
-
-
 def example_edge_cases():
-    """Example 5: Edge cases and error handling."""
+    """Example 2: Edge cases and error handling."""
     print("\n" + "=" * 60)
-    print("EXAMPLE 5: Edge Cases")
+    print("EXAMPLE 2: Edge Cases")
     print("=" * 60)
 
     # Case 1: Duplicate resolution in filename
@@ -176,9 +72,6 @@ if __name__ == "__main__":
     print("\n🎬 MKV Organizer - Refactored Code Examples\n")
 
     example_parsing()
-    example_formatting()
-    example_building_filenames()
-    example_data_models()
     example_edge_cases()
 
     print("\n" + "=" * 60)

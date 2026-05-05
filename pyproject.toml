@@ -1,0 +1,7 @@
+# pyproject.toml
+[project]
+name = "MKV-Organizer"
+dynamic = ["version"]
+
+[tool.setuptools.packages.find]
+where = ["."]

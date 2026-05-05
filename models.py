@@ -15,6 +15,8 @@ class ParsedFileInfo:
     resolution: str = ""
     codec: str = ""  # x264, x265, AV1, etc.
     source: str = ""  # e.g., WEB-DL, HDTV
+    audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
+    lang: str = ""  # e.g., chs, eng
     extra: str = ""  # Any extra info that doesn't fit into other fields
     release_group: str = ""
     extension: str = ""
@@ -28,6 +30,8 @@ class MediaMetadata:
     resolution: str = ""
     codec: str = ""
     source: str = ""  # e.g., WEB-DL, HDTV
+    audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
+    lang: str = ""  # e.g., chs, eng
     extra: str = ""  # Any extra info that doesn't fit into other fields
 
 
