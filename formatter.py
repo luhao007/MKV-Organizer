@@ -1,7 +1,11 @@
 """Format and capitalize video filenames according to naming conventions."""
 
+from typing import Iterable
+
 from config import (
+    KNOWN_AUDIO_CODECS,
     KNOWN_CODECS,
+    KNOWN_LANGUAGES,
     KNOWN_SOURCES,
     STOPWORDS,
     WORD_SPLIT_PATTERN,
@@ -100,42 +104,16 @@ def format_resolution(resolution: str) -> str:
     return resolution.lower() if resolution else ""
 
 
-def format_codec(codec: str) -> str:
-    """
-    Format codec string according to conventions.
-
-    Examples:
-        "x265" -> "x265"
-        "X264" -> "x264"
-        "H.265" -> "H.265"
-        "AV1" -> "AV1"
-    """
-    if not codec:
+def format_known(value: str, known_list: Iterable[str]) -> str:
+    """Format a value by matching it against a known list (case-insensitive)."""
+    if not value:
         return ""
 
-    for known in KNOWN_CODECS:
-        if codec.lower() == known.lower():
+    for known in known_list:
+        if value.lower() == known.lower():
             return known
 
-    return codec
-
-
-def format_source(source: str) -> str:
-    """
-    Format source string according to conventions.
-
-    Examples:
-        "WEB-DL" -> "WEB-DL"
-        "BluRay" -> "BluRay"
-    """
-    if not source:
-        return ""
-
-    for known in KNOWN_SOURCES:
-        if source.lower() == known.lower():
-            return known
-
-    return source
+    return value
 
 
 def format_show_name(show_name: str) -> str:
@@ -150,6 +128,8 @@ def build_filename(
     title: str,
     resolution: str = "",
     codec: str = "",
+    audio_codec: str = "",
+    lang: str = "",
     source: str = "",
     extra: str = "",
     release_group: str = "",
@@ -166,25 +146,25 @@ def build_filename(
         title: Episode title
         resolution: Video resolution (e.g., "1080p")
         codec: Video codec (e.g., "x265")
+        audio_codec: Audio codec (e.g., "DD5.1")
+        lang: Language code (e.g., "eng")
+        source: Source type (e.g., "WEB-DL")
+        extra: Extra information (e.g., "REPACK")
         release_group: Release group name (e.g., "RARBG")
 
     Returns:
         Formatted filename without extension
     """
-    # Format and capitalize all components
-    formatted_show = format_show_name(show_name)
-    formatted_title = format_title(title)
-    formatted_resolution = format_resolution(resolution)
-    formatted_codec = format_codec(codec)
-    formatted_source = format_source(source)
     # Build parts list (skip empty parts)
     parts = [
-        formatted_show,
+        format_show_name(show_name),
         f"S{season}E{episode}",
-        formatted_title,
-        formatted_resolution,
-        formatted_source,
-        formatted_codec,
+        format_title(title),
+        format_resolution(resolution),
+        format_known(source, KNOWN_SOURCES),
+        format_known(codec, KNOWN_CODECS),
+        format_known(audio_codec, KNOWN_AUDIO_CODECS),
+        format_known(lang, KNOWN_LANGUAGES),
         extra,
     ]
     parts = [p for p in parts if p]

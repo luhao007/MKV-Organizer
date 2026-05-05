@@ -259,6 +259,8 @@ def build_new_filename(
         title=parsed.title,
         resolution=parsed.resolution,
         codec=parsed.codec,
+        audio_codec=parsed.audio_codec,
+        lang=parsed.lang,
         source=parsed.source,
         extra=parsed.extra,
         release_group=parsed.release_group,
@@ -315,11 +317,11 @@ def rename_files(
                     logger.info(
                         f"Rename: {Path(file_def.filename).name} -> {new_filename}"
                     )
+                    ren_count += 1
 
                     if not dry_run:
                         try:
                             os.rename(file_def.filename, new_path)
-                            ren_count += 1
                         except OSError as e:
                             logger.error(f"Failed to rename {file_def.filename}: {e}")
 

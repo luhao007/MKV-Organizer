@@ -52,6 +52,7 @@ KNOWN_SOURCES = [
     "TVRip",
     "AMZN.WEB-DL",
     "CRVE.WEB-DL",
+    "Disney+.WEB-DL",
     "WEB.DL",
     "WEB-DL",
     "WEBRip",
@@ -62,13 +63,14 @@ KNOWN_SOURCES = [
     "DVDRip",
 ]
 
-_SOURCE_PATTERN: Final = "|".join(KNOWN_SOURCES)
+_SOURCE_PATTERN: Final = "|".join(map(re.escape, KNOWN_SOURCES))
 SOURCE_PATTERN: Final = re.compile(rf"(?i)\b(?P<source>{_SOURCE_PATTERN})\b")
 
 KNOWN_AUDIO_CODECS = [
     "AC3",
     "AAC",
     "DD5.1",
+    "DD.5.1",
     "DD2.0",
     "DD.2.0",
     "DDP",

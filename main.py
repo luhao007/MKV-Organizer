@@ -78,7 +78,6 @@ def main():
     parser.add_argument(
         "--check-low-resolution",
         type=int,
-        default=1080,
         help=(
             "Resolution threshold (e.g. 1080) to check for episodes with low resolution"
         ),
@@ -137,11 +136,12 @@ def main():
             include_language=include_language,
         )
 
-        if dry_run:
-            logger.info(f"DRY RUN MODE - No files would be renamed")
-            logger.info("Use --commit or -c to actually rename files")
-        elif ren_count > 0:
-            logger.info(f"{ren_count} files have been renamed successfully")
+        if ren_count:
+            if dry_run:
+                logger.info(f"DRY RUN MODE - {ren_count} files would be renamed")
+                logger.info("Use --commit or -c to actually rename files")
+            else:
+                logger.info(f"{ren_count} files have been renamed successfully")
         else:
             logger.info("All files are sorted. No files needed to be renamed")
 
