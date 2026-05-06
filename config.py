@@ -1,5 +1,6 @@
 """Configuration and constants for MKV Organizer."""
 
+import itertools
 import logging
 import re
 from typing import Final
@@ -7,27 +8,10 @@ from typing import Final
 # Supported video formats
 VIDEO_FORMATS: Final = ["mkv", "mp4", "avi", "ts", "mpeg", "mpg", "mov", "wmv"]
 
-# Supported subtitle formats and languages
-SUBTITLE_FORMATS: Final = ["srt", "ass", "ssa", "sub"]
-KNOWN_LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "fra", "zh", "en"}
-
-# Regex Patterns
-# ============================================================================
-
-# Match season/episode patterns with separators.
-# Supports both: S01E10 and 3x07
-# Works with dots, spaces, underscores, hyphens as separators.
-SEASON_EPISODE_PATTERN: Final = re.compile(
-    r"(?i)(?:^|[.\s_-])(?:"
-    r"s(?P<season_s>\d{1,2})e(?P<episode_s>\d{2,3})|"
-    r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,3})"
-    r")(?:$|[.\s_-])"
-)
-
-# Match resolution (e.g., 1080p, 720p, 2160p)
-RESOLUTION_PATTERN: Final = re.compile(r"(?i)(?<!\d)(?P<res>\d{3,4}p)(?!\d)")
-
-KNOWN_CODECS = [
+# lists of known values for various metadata fields, used for more accurate parsing
+SUBTITLE_FORMATS: Final = ["srt", "ass", "ssa", "sub", "vtt"]
+LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "fra", "zh", "en"}
+CODECS: Final = [
     "x264",
     "H264",
     "H.264",
@@ -45,10 +29,7 @@ KNOWN_CODECS = [
     "VP9",
 ]
 
-_CODEC_PATTERN: Final = "|".join(KNOWN_CODECS)
-CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<codec>{_CODEC_PATTERN})\b")
-
-KNOWN_SOURCES = [
+SOURCES: Final = [
     "HDTV",
     "TVRip",
     "YTB.WEB-DL",
@@ -65,21 +46,9 @@ KNOWN_SOURCES = [
     "DVDRip",
 ]
 
-_SOURCE_PATTERN: Final = "|".join(
-    sorted(map(re.escape, KNOWN_SOURCES), key=len, reverse=True)
-)
-SOURCE_PATTERN: Final = re.compile(rf"(?i)\b(?P<source>{_SOURCE_PATTERN})\b")
-
-KNOWN_AUDIO_CODECS = [
+_AUDIO_CODECS = [
     "AC3",
     "AAC",
-    "DD5.1",
-    "DD.5.1",
-    "DD2.0",
-    "DD.2.0",
-    "DDP",
-    "DDP5.1",
-    "DDP.5.1",
     "DTS",
     "DTS-HD",
     "DTS-HD.MA",
@@ -91,19 +60,31 @@ KNOWN_AUDIO_CODECS = [
     "MP2",
     "Opus",
 ]
+_AUDIO_CODECS_EXTRA = ["DD", "DDP", "TrueHD", "TrueHD.Atmos"]
+_CHANNELS = ["2.0", "5.1", "7.1"]
 
-
-# 重要：把 codec 先按长度从长到短排序，避免 "DTS" 抢先匹配 "DTS-HD.MA"
-_audio_alts = "|".join(
-    sorted(map(re.escape, KNOWN_AUDIO_CODECS), key=len, reverse=True)
+AUDIO_CODECS: Final = (
+    _AUDIO_CODECS
+    + _AUDIO_CODECS_EXTRA
+    + list(map(".".join, itertools.product(_AUDIO_CODECS_EXTRA, _CHANNELS)))
 )
 
-_AUDIO_CODEC_PATTERN: Final = rf"({_audio_alts})(\.({_audio_alts}))*"
-AUDIO_CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<audio>{_AUDIO_CODEC_PATTERN})\b")
 
-_LANGUAGE_PATTERN: Final = "|".join(KNOWN_LANGUAGES)
-_LANGUAGE_PATTERN_REPEATED: Final = rf"({_LANGUAGE_PATTERN})(\.({_LANGUAGE_PATTERN}))*"
-LANGUAGE_PATTERN: Final = re.compile(rf"(?i)\b(?P<lang>{_LANGUAGE_PATTERN_REPEATED})\b")
+# Regex Patterns
+# ============================================================================
+
+# Match season/episode patterns with separators.
+# Supports both: S01E10 and 3x07
+# Works with dots, spaces, underscores, hyphens as separators.
+SEASON_EPISODE_PATTERN: Final = re.compile(
+    r"(?i)(?:^|[.\s_-])(?:"
+    r"s(?P<season_s>\d{1,2})e(?P<episode_s>\d{2,3})|"
+    r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,3})"
+    r")(?:$|[.\s_-])"
+)
+
+# Match resolution (e.g., 1080p, 720p, 2160p)
+RESOLUTION_PATTERN: Final = re.compile(r"(?i)(?<!\d)(?P<res>\d{3,4}p)(?!\d)")
 
 # For capitalization - split on dots, spaces, underscores, hyphens
 WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_-]+")
@@ -114,14 +95,11 @@ WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")
 # Stopwords for title capitalization (keep lowercase except first word)
 STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
 
-# Metadata suffixes that are not part of the episode title.
+# TODO: Metadata suffixes that are not part of the episode title, and
+# not handled by our parser yet.
 TITLE_METADATA_SUFFIX_PATTERN: Final = re.compile(
     r"(?i)^(?P<title>.*?)(?:[.\s_-]*(?:"
     r"\d{3,4}p|"
-    f"{_CODEC_PATTERN}|"
-    f"{_SOURCE_PATTERN}|"
-    f"{_AUDIO_CODEC_PATTERN}|"
-    f"{_LANGUAGE_PATTERN}|"
     r"HDR|HDR10|HDR10\+|"
     r"PROPER|REMUX|REPACK|LIMITED)(?:[.\s_-]*))*$"
 )
@@ -132,6 +110,7 @@ EPISODE_NAME_FILE: Final = "episode_names.txt"
 # Release group pattern (trailing text after last hyphen)
 # E.g., "...-RARBG", "...-DEFLATE", "...-GROUP_NAME"
 
+RELEASE_GROUP_PATTERN: Final = re.compile(r"-([A-Za-z0-9][A-Za-z0-9_]{1,30})$")
 
 # Logging Configuration
 # ============================================================================
@@ -156,6 +135,3 @@ def setup_logging(verbose: bool = False) -> None:
     for logger_name in logging.Logger.manager.loggerDict:
         logger = logging.getLogger(logger_name)
         logger.setLevel(level)
-
-
-RELEASE_GROUP_PATTERN: Final = re.compile(r"-([A-Za-z0-9][A-Za-z0-9_]{1,30})$")

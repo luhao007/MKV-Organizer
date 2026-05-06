@@ -2,16 +2,16 @@
 
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from config import (
-    AUDIO_CODEC_PATTERN,
-    CODEC_PATTERN,
-    LANGUAGE_PATTERN,
+    AUDIO_CODECS,
+    CODECS,
+    LANGUAGES,
     RELEASE_GROUP_PATTERN,
     RESOLUTION_PATTERN,
     SEASON_EPISODE_PATTERN,
-    SOURCE_PATTERN,
+    SOURCES,
     TITLE_METADATA_SUFFIX_PATTERN,
 )
 from models import ParsedFileInfo
@@ -102,6 +102,19 @@ def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, s
     return "", text
 
 
+def extract_through_known_lists(
+    lists: Iterable[str], text: str, repeated: bool = False
+) -> tuple[str, str]:
+    """Extract a value using the known lists and corresponding regex pattern."""
+    # Sort by length to ensure longer matches are found first
+    # (e.g., "AMZN.WEB-DL" before "WEB-DL")
+    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
+    if repeated:
+        pattern_str = rf"({pattern_str})(\.({pattern_str}))*"
+    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
+    return extract_through_pattern(pattern, text)
+
+
 def extract_resolution(text: str) -> Optional[str]:
     """Extract resolution (e.g., 1080p, 720p)."""
     match = RESOLUTION_PATTERN.search(text)
@@ -147,20 +160,14 @@ def parse_filename(filename: str) -> ParsedFileInfo:
     # Extract show name (everything before SxxEyy)
     show_name = normalize_separators(show_name)
 
-    # Extract resolution
+    # Extract resolution, codec, source, audio codec, language
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
-
-    # Extract codec
-    codec, unparsed = extract_through_pattern(CODEC_PATTERN, unparsed)
-
-    # Extract source
-    source, unparsed = extract_through_pattern(SOURCE_PATTERN, unparsed)
-
-    # Extract audio codec
-    audio_codec, unparsed = extract_through_pattern(AUDIO_CODEC_PATTERN, unparsed)
-
-    # Extract language
-    lang, unparsed = extract_through_pattern(LANGUAGE_PATTERN, unparsed)
+    codec, unparsed = extract_through_known_lists(CODECS, unparsed)
+    source, unparsed = extract_through_known_lists(SOURCES, unparsed)
+    audio_codec, unparsed = extract_through_known_lists(
+        AUDIO_CODECS, unparsed, repeated=True
+    )
+    lang, unparsed = extract_through_known_lists(LANGUAGES, unparsed, repeated=True)
 
     # Extract title directly
     title = strip_trailing_metadata(unparsed)

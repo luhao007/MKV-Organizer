@@ -7,7 +7,7 @@ from parser import parse_filename
 from pathlib import Path
 from typing import Optional
 
-from config import EPISODE_NAME_FILE, KNOWN_LANGUAGES, VIDEO_FORMATS
+from config import EPISODE_NAME_FILE, LANGUAGES, VIDEO_FORMATS
 from media_info import extract_media_info
 from models import FileDefinition
 from utils import get_logger
@@ -40,7 +40,7 @@ def get_subtitle_language(filename: str) -> str:
     parts = filename.replace(".srt", "").replace(".ass", "").split(".")
     if len(parts) >= 2:
         potential_lang = parts[-1].lower()
-        if potential_lang in KNOWN_LANGUAGES:
+        if potential_lang in LANGUAGES:
             return potential_lang
     return ""
 
@@ -245,14 +245,10 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
 
     # Fill in missing data from primary video
     for file_def in files:
-        if not file_def.parsed.resolution and primary.parsed.resolution:
-            file_def.parsed.resolution = primary.parsed.resolution
-
-        if not file_def.parsed.codec and primary.parsed.codec:
-            file_def.parsed.codec = primary.parsed.codec
-
-        if not file_def.parsed.audio_codec and primary.parsed.audio_codec:
-            file_def.parsed.audio_codec = primary.parsed.audio_codec
+        file_def.parsed.resolution = primary.parsed.resolution
+        file_def.parsed.source = primary.parsed.source
+        file_def.parsed.codec = primary.parsed.codec
+        file_def.parsed.audio_codec = primary.parsed.audio_codec
 
 
 def build_new_filename(
@@ -275,15 +271,11 @@ def build_new_filename(
         resolution=parsed.resolution,
         codec=parsed.codec,
         audio_codec=parsed.audio_codec,
-        lang=parsed.lang,
+        lang=parsed.lang if include_language else "",
         source=parsed.source,
         extra=parsed.extra,
         release_group=parsed.release_group,
     )
-
-    # Add language for subtitle files
-    if include_language and file_def.is_subtitle and file_def.subtitle_lang:
-        return f"{base}.{file_def.subtitle_lang}.{parsed.extension}"
 
     return f"{base}.{parsed.extension}"
 

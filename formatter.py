@@ -3,10 +3,10 @@
 from typing import Iterable
 
 from config import (
-    KNOWN_AUDIO_CODECS,
-    KNOWN_CODECS,
-    KNOWN_LANGUAGES,
-    KNOWN_SOURCES,
+    AUDIO_CODECS,
+    CODECS,
+    LANGUAGES,
+    SOURCES,
     STOPWORDS,
     WORD_SPLIT_PATTERN,
     WRAP_PATTERN,
@@ -161,10 +161,10 @@ def build_filename(
         f"S{season}E{episode}",
         format_title(title),
         format_resolution(resolution),
-        format_known(source, KNOWN_SOURCES),
-        format_known(codec, KNOWN_CODECS),
-        format_known(audio_codec, KNOWN_AUDIO_CODECS),
-        format_known(lang, KNOWN_LANGUAGES),
+        format_known(source, SOURCES),
+        format_known(codec, CODECS),
+        format_known(audio_codec, AUDIO_CODECS),
+        format_known(lang, LANGUAGES),
         extra,
     ]
     parts = [p for p in parts if p]
