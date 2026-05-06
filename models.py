@@ -34,6 +34,21 @@ class MediaMetadata:
     lang: str = ""  # e.g., chs, eng
     extra: str = ""  # Any extra info that doesn't fit into other fields
 
+    def __bool__(self):
+        """Return True if any metadata field is populated."""
+        # XXX: This will always be True if we parsed any media info
+        # as the resolution field will be at least available
+        return any(
+            [
+                self.resolution,
+                self.codec,
+                self.source,
+                self.audio_codec,
+                self.lang,
+                self.extra,
+            ]
+        )
+
 
 @dataclass
 class FileDefinition:

@@ -42,6 +42,7 @@ KNOWN_CODECS = [
     "MPEG-4",
     "MPEG-1",
     "MPEG-2",
+    "VP9",
 ]
 
 _CODEC_PATTERN: Final = "|".join(KNOWN_CODECS)
@@ -50,6 +51,7 @@ CODEC_PATTERN: Final = re.compile(rf"(?i)\b(?P<codec>{_CODEC_PATTERN})\b")
 KNOWN_SOURCES = [
     "HDTV",
     "TVRip",
+    "YTB.WEB-DL",
     "AMZN.WEB-DL",
     "CRVE.WEB-DL",
     "Disney+.WEB-DL",
@@ -63,7 +65,9 @@ KNOWN_SOURCES = [
     "DVDRip",
 ]
 
-_SOURCE_PATTERN: Final = "|".join(map(re.escape, KNOWN_SOURCES))
+_SOURCE_PATTERN: Final = "|".join(
+    sorted(map(re.escape, KNOWN_SOURCES), key=len, reverse=True)
+)
 SOURCE_PATTERN: Final = re.compile(rf"(?i)\b(?P<source>{_SOURCE_PATTERN})\b")
 
 KNOWN_AUDIO_CODECS = [
@@ -82,6 +86,10 @@ KNOWN_AUDIO_CODECS = [
     "TrueHD",
     "TrueHD.7.1",
     "Atmos",
+    "FLAC",
+    "MP3",
+    "MP2",
+    "Opus",
 ]
 
 
@@ -150,4 +158,4 @@ def setup_logging(verbose: bool = False) -> None:
         logger.setLevel(level)
 
 
-RELEASE_GROUP_PATTERN: Final = re.compile(r"-([A-Za-z0-9][A-Za-z0-9._]{1,30})$")
+RELEASE_GROUP_PATTERN: Final = re.compile(r"-([A-Za-z0-9][A-Za-z0-9_]{1,30})$")

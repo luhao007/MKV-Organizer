@@ -81,3 +81,17 @@ class TestParser(unittest.TestCase):
         self.assertEqual(parsed.codec, "H264")
         self.assertEqual(parsed.audio_codec, "DDP")
         self.assertEqual(parsed.release_group, "HDCTV")
+
+    def test_full_pattern_5(self):
+        parsed = parse_filename(
+            "Air.Crash.Investigation.S01E03.Fire.On.Board.(Swissair.Flight.111).1080p.YTB.WEB-DL.VP9.Opus.mkv"
+        )
+
+        self.assertEqual(parsed.show_name, "Air Crash Investigation")
+        self.assertEqual(parsed.season, "01")
+        self.assertEqual(parsed.episode, "03")
+        self.assertEqual(parsed.title, "Fire On Board (Swissair Flight 111)")
+        self.assertEqual(parsed.resolution, "1080p")
+        self.assertEqual(parsed.source, "YTB.WEB-DL")
+        self.assertEqual(parsed.codec, "VP9")
+        self.assertEqual(parsed.audio_codec, "Opus")

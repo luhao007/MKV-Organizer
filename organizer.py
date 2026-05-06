@@ -172,10 +172,6 @@ def organize_files(
                 f"Detected subtitle file: {filename} (lang: {file_def.subtitle_lang})"
             )
 
-        # Extract media info from video files
-        if is_video_file(filename):
-            file_def.media = extract_media_info(full_path)
-
         # Organize by season/episode
         season = parsed.season
         episode = parsed.episode
@@ -224,20 +220,39 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
     # Find primary video file
     primary = None
     for file_def in files:
-        if not file_def.is_subtitle and file_def.media:
+        if is_video_file(file_def.filename):
             primary = file_def
             break
 
     if not primary:
         return
 
+    # Extract media info if any key is missing
+    if (
+        not primary.parsed.resolution
+        or not primary.parsed.codec
+        or not primary.parsed.audio_codec
+    ):
+        if not primary.media:
+            primary.media = extract_media_info(primary.filename)
+        primary.parsed.resolution = (
+            primary.parsed.resolution or primary.media.resolution
+        )
+        primary.parsed.codec = primary.parsed.codec or primary.media.codec
+        primary.parsed.audio_codec = (
+            primary.parsed.audio_codec or primary.media.audio_codec
+        )
+
     # Fill in missing data from primary video
     for file_def in files:
-        if not file_def.parsed.resolution and primary.media.resolution:
-            file_def.parsed.resolution = primary.media.resolution
+        if not file_def.parsed.resolution and primary.parsed.resolution:
+            file_def.parsed.resolution = primary.parsed.resolution
 
-        if not file_def.parsed.codec and primary.media.codec:
-            file_def.parsed.codec = primary.media.codec
+        if not file_def.parsed.codec and primary.parsed.codec:
+            file_def.parsed.codec = primary.parsed.codec
+
+        if not file_def.parsed.audio_codec and primary.parsed.audio_codec:
+            file_def.parsed.audio_codec = primary.parsed.audio_codec
 
 
 def build_new_filename(
@@ -363,7 +378,7 @@ def check_low_resolution(
         list of missing episode identifiers (e.g., "S01E02")
     """
     low_res: dict[str, str] = {}
-    for season, episodes in organized.items():
+    for season, episodes in sorted(organized.items()):
         for episode, episode_files in episodes.items():
             for file_def in episode_files.values():
                 if not file_def.is_subtitle:
