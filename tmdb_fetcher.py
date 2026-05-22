@@ -6,7 +6,7 @@ from typing import Any, Final, Optional
 import httpx
 
 from config import EPISODE_NAME_FILE
-from models import FileOrganization
+from models import FileDefinition, FileOrganization
 from utils import get_logger
 
 logger = get_logger(__name__)
@@ -184,81 +184,133 @@ def fetch_episode_name(
     return None
 
 
-def fetch_episode_names_batch(parsed_episodes: list[dict[str, str]]) -> dict[str, str]:
-    if not parsed_episodes:
-        return {}
+def fetch_episode_names_batch(
+    organized: FileOrganization, override_show_name: Optional[str] = None
+) -> bool:
+    """Fetch episode names from TMDB and update FileOrganization in-place.
 
-    results: dict[str, str] = {}
+    Processes files grouped by show_name:
+    1. For each unique show, searches TMDB once to get show ID and year
+    2. Stores tmdb_id and year in all parsed info for that show
+    3. Fetches all unique seasons for that show
+    4. Updates episode title (and other fields) for each file
+
+    This reduces API calls from O(N) (one per episode) to roughly
+    O(unique_shows + sum_of_unique_seasons_per_show).
+
+    Args:
+        organized: FileOrganization dict (season -> episode -> ext -> FileDefinition).
+                   Gets updated in-place with tmdb_id, year, and title.
+
+    Returns:
+        True if at least one episode name was fetched and updated, False otherwise.
+    """
+    if not organized:
+        return False
+
     api_key = _get_api_key()
+    updated_any = False
 
-    # ── Step 1: group episodes by show name ────────────────────────────
-    shows_map: dict[str, int] = {}  # show_name -> tmdb_show_id
-    for ep_info in parsed_episodes:
-        show_name = ep_info["show_name"]
+    # Group files by show_name
+    # show_name -> (tmdb_show_id, year)
+    shows_map: dict[str, tuple[int, str]] = {}
+    #   show_name -> [FileDefinition, ...]
+    show_files: dict[str, list[FileDefinition]] = {}
+
+    for season_files in organized.values():
+        for episode_files in season_files.values():
+            for file_def in episode_files.values():
+                if file_def.is_subtitle:
+                    continue
+
+                if override_show_name:
+                    show_name = override_show_name
+                else:
+                    show_name = file_def.parsed.show_name
+                if show_name not in show_files:
+                    show_files[show_name] = []
+                show_files[show_name].append(file_def)
+
+    if not show_files:
+        logger.warning("No video files found in organized data")
+        return False
+
+    # ── Step 1: Search TMDB for each unique show ───────────────────────
+    for show_name in show_files:
         if show_name not in shows_map:
             show_data = _search_show(api_key, show_name)
             if show_data:
-                shows_map[show_name] = int(show_data["id"])
+                tmdb_show_id = int(show_data["id"])
+                # Extract year from first_air_date (format: YYYY-MM-DD)
+                first_air_date = str(show_data.get("first_air_date", ""))
+                year = first_air_date[:4] if first_air_date else ""
+                shows_map[show_name] = (tmdb_show_id, year)
+                logger.info(
+                    f"Found TMDB show: {show_data['name']} "
+                    f"(id: {tmdb_show_id}, year: {year})"
+                )
             else:
                 logger.warning(f"Could not find TMDB show for '{show_name}', skipping.")
 
-    # ── Step 2: for each show, fetch needed seasons once ───────────────
-    # season_cache[tmdb_show_id][season_number] -> list[episode_dicts]
-    season_cache: dict[int, dict[int, list[dict[str, Any]]]] = {}
+    # ── Step 2: For each show, fetch needed seasons and update files ────
+    for show_name, file_list in show_files.items():
+        if show_name not in shows_map:
+            continue
 
-    for show_name, tmdb_show_id in shows_map.items():
+        tmdb_show_id, year = shows_map[show_name]
+
         # Collect unique season numbers needed for this show
         needed_seasons: set[int] = set()
-        for ep_info in parsed_episodes:
-            if ep_info["show_name"] == show_name:
-                try:
-                    needed_seasons.add(int(ep_info["season"]))
-                except ValueError:
-                    continue
+        for file_def in file_list:
+            try:
+                needed_seasons.add(int(file_def.parsed.season))
+            except ValueError:
+                continue
 
-        # Fetch each season once (cached per show)
-        seasons_for_show = _fetch_seasons_for_episodes(
+        # Fetch all seasons at once
+        seasons_cache = _fetch_seasons_for_episodes(
             api_key, tmdb_show_id, needed_seasons
         )
-        season_cache[tmdb_show_id] = seasons_for_show
 
-    # ── Step 3: look up each requested episode from cached data ────────
-    for ep_info in parsed_episodes:
-        show_name = ep_info["show_name"]
-        tmdb_show_id = shows_map.get(show_name)
-        if not tmdb_show_id:
-            continue
+        # ── Step 3: Update each file's parsed info with TMDB data ────────
+        for file_def in file_list:
+            # Store TMDB ID and year in parsed info
+            file_def.parsed.tmdb_id = tmdb_show_id
+            if year:
+                file_def.parsed.year = year
 
-        try:
-            season_num = int(ep_info["season"])
-            episode_num = int(ep_info["episode"])
-        except ValueError:
-            logger.warning(
-                "Invalid season/episode in batch request:"
-                f" S{ep_info['season']}E{ep_info['episode']}"
-            )
-            continue
+            try:
+                season_num = int(file_def.parsed.season)
+                episode_num = int(file_def.parsed.episode)
+            except ValueError:
+                logger.warning(
+                    f"Invalid season/episode for {file_def.filename}: "
+                    f"S{file_def.parsed.season}E{file_def.parsed.episode}"
+                )
+                continue
 
-        seasons_for_show = season_cache.get(tmdb_show_id, {})
-        episodes_for_season = seasons_for_show.get(season_num)
-        if not episodes_for_season:
-            logger.warning(f"No cached data for S{ep_info['season']} of '{show_name}'")
-            continue
+            episodes_for_season = seasons_cache.get(season_num)
+            if not episodes_for_season:
+                logger.debug(
+                    f"No cached season data for S{file_def.parsed.season} "
+                    f"of '{show_name}'"
+                )
+                continue
 
-        # Find the matching episode within this season's cache
-        for ep in episodes_for_season:
-            if int(ep.get("episode_number", 0)) == episode_num:
-                ep_name = ep.get("name", "")
-                if ep_name:
-                    key = f"{ep_info['season']}|{ep_info['episode']}"
-                    results[key] = ep_name
-                    logger.info(
-                        "Found TMDB episode name:"
-                        f" S{season_num:02d}E{episode_num:02d} - {ep_name}"
-                    )
-                break
+            # Find the matching episode and update title
+            for ep in episodes_for_season:
+                if int(ep.get("episode_number", 0)) == episode_num:
+                    ep_name = ep.get("name", "")
+                    if ep_name:
+                        file_def.parsed.title = ep_name
+                        logger.info(
+                            f"Updated S{season_num:02d}E{episode_num:02d} title:"
+                            f" {ep_name}"
+                        )
+                        updated_any = True
+                    break
 
-    return results
+    return updated_any
 
 
 def search_show_by_name(show_name: str) -> Optional[dict[str, Any]]:
@@ -290,71 +342,75 @@ def fetch_and_save_episode_names(
     folder: str,
     show_name: Optional[str] = None,
 ) -> bool:
-    """
-    Fetch episode names from TMDB and save to EPISODE_NAME_FILE.
+    """Fetch episode names from TMDB and update FileOrganization in-place.
+
+    Also saves results to EPISODE_NAME_FILE for backward compatibility.
 
     Args:
-        organized: The FileOrganization structure (nested dict of season/episode/files).
-        folder: Path to the target folder where the index file will be saved.
-        show_name: Explicit show name. If None, auto-detects from organized data.
+        organized: The FileOrganization structure (season -> episode -> ext -> FileDefinition).
+                   Gets updated in-place with parsed.title, parsed.tmdb_id, parsed.year.
+        folder: Path to the target folder where EPISODE_NAME_FILE will be saved.
+        show_name: Explicit show name filter. If provided, only fetches for that show.
+                   If None, fetches for all shows in organized data.
 
     Returns:
         True if at least one episode name was fetched and saved, False otherwise.
     """
-    # Auto-detect show name if not provided
-    if not show_name:
-        show_names: set[str] = set()
-        for season_files in organized.values():
-            for episode_files in season_files.values():
-                for file_def in episode_files.values():
-                    if not file_def.is_subtitle and file_def.parsed.show_name:
-                        show_names.add(file_def.parsed.show_name)
+    logger.info("Fetching episode names from TMDB and updating parsed info...")
 
-        if len(show_names) == 1:
-            show_name = next(iter(show_names))
-            logger.info(f"Auto-detected TMDB show name: {show_name}")
-        elif len(show_names) > 1:
-            logger.warning(
-                f"Multiple show names detected: {show_names}. "
-                "Using first one. Specify with --fetch-tmdb <SHOW_NAME>"
-            )
-            show_name = sorted(show_names)[0]
-        else:
-            logger.error("Cannot detect show name from filenames.")
-            return False
-
-    # Collect unique season/episode combinations from organized data
-    episodes_to_fetch: dict[str, dict[str, str]] = {}
-    for season, episodes in organized.items():
-        for episode in episodes:
-            key = f"{season}|{episode}"
-            if key not in episodes_to_fetch:
-                episodes_to_fetch[key] = {
-                    "show_name": show_name,
-                    "season": season.zfill(2),
-                    "episode": episode.zfill(2),
-                }
-
-    # Fetch names from TMDB
-    logger.info(f"Fetching {len(episodes_to_fetch)} episode names from TMDB...")
-    fetched_names = fetch_episode_names_batch(list(episodes_to_fetch.values()))
-
-    if not fetched_names:
-        logger.error("No episode names found on TMDB. Check show name.")
+    # Call the batch function to fetch and update in-place
+    success = fetch_episode_names_batch(organized, show_name)
+    if not success:
+        logger.error("No episode names found or updated from TMDB")
         return False
 
-    # Save to EPISODE_NAME_FILE
-    index_path = Path(folder) / EPISODE_NAME_FILE
-    with index_path.open("w", encoding="utf-8") as file:
-        file.write(show_name)
-        file.write("\n")
-        for key in sorted(fetched_names.keys()):
-            season, episode = key.split("|")
-            title = fetched_names[key]
-            file.write(f"{season}|{episode}|{title}\n")
+    # Build EPISODE_NAME_FILE data from updated parsed info
+    # Group by show_name and collect updated titles
+    show_data: dict[str, dict[str, str]] = {}  # show_name -> {S#|E#: title}
 
-            for file_def in organized[season][episode].values():
-                file_def.parsed.title = title
+    for season_files in organized.values():
+        for episode_files in season_files.values():
+            for file_def in episode_files.values():
+                if file_def.is_subtitle:
+                    continue
 
-    logger.info(f"Fetched {len(fetched_names)} episode names to: {index_path}")
+                if show_name:
+                    show = show_name
+                else:
+                    show = file_def.parsed.show_name
+                if show not in show_data:
+                    show_data[show] = {}
+
+                key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
+                if file_def.parsed.title and key not in show_data[show]:
+                    show_data[show][key] = file_def.parsed.title
+
+    if not show_data:
+        logger.warning("No parsed episode data found to save")
+        return False
+
+    # Save to EPISODE_NAME_FILE (one file per show if multiple shows exist)
+    if len(show_data) == 1:
+        # Single show: save to folder root
+        show_name = next(iter(show_data))
+        index_path = Path(folder) / EPISODE_NAME_FILE
+        with index_path.open("w", encoding="utf-8") as f:
+            f.write(show_name + "\n")
+            for key in sorted(show_data[show_name].keys()):
+                season, episode = key.split("|")
+                title = show_data[show_name][key]
+                f.write(f"{season}|{episode}|{title}\n")
+        logger.info(f"Saved episode names to: {index_path}")
+    else:
+        # Multiple shows: save one file per show in subfolder
+        for show, episodes in show_data.items():
+            index_path = Path(folder) / f"episode_names_{show.replace('/', '_')}.txt"
+            with index_path.open("w", encoding="utf-8") as f:
+                f.write(show + "\n")
+                for key in sorted(episodes.keys()):
+                    season, episode = key.split("|")
+                    title = episodes[key]
+                    f.write(f"{season}|{episode}|{title}\n")
+            logger.info(f"Saved episode names for '{show}' to: {index_path}")
+
     return True

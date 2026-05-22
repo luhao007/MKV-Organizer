@@ -27,9 +27,9 @@ class ParsedFileInfo:
     extension: str = ""
     original_filename: str = ""
 
-    # TMDB metadata (populated by fetch_episode_names):
-    tmdb_id: int = 0  # TMDB show ID
-    show_year: str = ""  # First air date / year from TMDB
+    # Extra info:
+    year: str = ""  # For movies/shows, extracted year
+    tmdb_id: int = 0  # TMDB show ID from API lookup
 
 
 @dataclass
