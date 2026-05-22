@@ -12,6 +12,7 @@ from organizer import (
     rename_files,
     write_episode_name_index,
 )
+from tmdb_fetcher import fetch_and_save_episode_names
 from utils import get_logger
 
 
@@ -82,6 +83,16 @@ def main():
             "Resolution threshold (e.g. 1080) to check for episodes with low resolution"
         ),
     )
+    parser.add_argument(
+        "--fetch-tmdb",
+        nargs="?",
+        const="__auto__",
+        metavar="SHOW_NAME",
+        help=(
+            "Fetch episode names from TMDB and save to episode_names.txt. "
+            "If SHOW_NAME is omitted, auto-detect show name from filenames"
+        ),
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -127,6 +138,13 @@ def main():
 
         # Determine dry_run mode
         dry_run = not args.commit
+
+        # Fetch episode names from TMDB if requested
+        if args.fetch_tmdb is not None:
+            show_name = args.fetch_tmdb if args.fetch_tmdb != "__auto__" else None
+            success = fetch_and_save_episode_names(organized, folder, show_name)
+            if not success:
+                return 1
 
         # Rename files
         include_language = not args.no_language

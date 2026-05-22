@@ -10,6 +10,7 @@ VIDEO_FORMATS: Final = ["mkv", "mp4", "avi", "ts", "mpeg", "mpg", "mov", "wmv"]
 
 # lists of known values for various metadata fields, used for more accurate parsing
 SUBTITLE_FORMATS: Final = ["srt", "ass", "ssa", "sub", "vtt"]
+METADATA_FORMATS: Final = ["nfo", "txt", "info", "jpg", "jpeg", "png"]
 LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "fra", "zh", "en"}
 CODECS: Final = [
     "x264",
@@ -28,14 +29,29 @@ CODECS: Final = [
     "MPEG-2",
     "VP9",
 ]
+FEATURE: Final = [
+    "HDR",
+    "HDR10",
+    "10bit",
+    "SDR",
+    "8bit",
+    "DV",
+    "DolbyVision",
+    "DoVi",
+]
 
+_WEB_SOURCES: Final = [
+    "YTB",  # YouTube
+    "AMZN",  # Amazon Prime Video
+    "CRVE",  # Crave (Canadian Streaming Service)
+    "DSNP",  # Disney+
+    "Disney+",  # Disney+ alternative
+    "HULU",  # Hulu
+    "NF",  # Netflix
+]
 SOURCES: Final = [
     "HDTV",
     "TVRip",
-    "YTB.WEB-DL",
-    "AMZN.WEB-DL",
-    "CRVE.WEB-DL",
-    "Disney+.WEB-DL",
     "WEB.DL",
     "WEB-DL",
     "WEBRip",
@@ -44,7 +60,9 @@ SOURCES: Final = [
     "BRRip",
     "DVD",
     "DVDRip",
-]
+] + list(map(".".join, itertools.product(_WEB_SOURCES, ["WEB-DL", "WEB.DL", "WEBRip"])))
+
+PACKAGE: Final = ["INITIAL", "PROPER", "REPACK", "REMUX", "HYBRID", "MULTI"]
 
 _AUDIO_CODECS = [
     "AC3",
@@ -60,13 +78,12 @@ _AUDIO_CODECS = [
     "MP2",
     "Opus",
 ]
-_AUDIO_CODECS_EXTRA = ["DD", "DDP", "TrueHD", "TrueHD.Atmos"]
+_AUDIO_CODECS_WITH_CHANNELS = ["DD", "DDP", "TrueHD", "TrueHD.Atmos"]
 _CHANNELS = ["2.0", "5.1", "7.1"]
-
 AUDIO_CODECS: Final = (
     _AUDIO_CODECS
-    + _AUDIO_CODECS_EXTRA
-    + list(map(".".join, itertools.product(_AUDIO_CODECS_EXTRA, _CHANNELS)))
+    + _AUDIO_CODECS_WITH_CHANNELS
+    + list(map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
 )
 
 
@@ -98,10 +115,7 @@ STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
 # TODO: Metadata suffixes that are not part of the episode title, and
 # not handled by our parser yet.
 TITLE_METADATA_SUFFIX_PATTERN: Final = re.compile(
-    r"(?i)^(?P<title>.*?)(?:[.\s_-]*(?:"
-    r"\d{3,4}p|"
-    r"HDR|HDR10|HDR10\+|"
-    r"PROPER|REMUX|REPACK|LIMITED)(?:[.\s_-]*))*$"
+    r"(?i)^(?P<title>.*?)(?:[.\s_-]*(?:\d{3,4}p|UHD|IMAX)(?:[.\s_-]*))*$"
 )
 
 # Default filename for stored episode title mappings.

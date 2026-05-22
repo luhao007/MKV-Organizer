@@ -7,7 +7,9 @@ from typing import Iterable, Optional
 from config import (
     AUDIO_CODECS,
     CODECS,
+    FEATURE,
     LANGUAGES,
+    PACKAGE,
     RELEASE_GROUP_PATTERN,
     RESOLUTION_PATTERN,
     SEASON_EPISODE_PATTERN,
@@ -77,6 +79,7 @@ def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     """
     match = SEASON_EPISODE_PATTERN.search(text)
     if not match:
+        logger.error(f"No season/episode pattern found in filename: {text}")
         raise ValueError("No season/episode pattern found")
 
     season = match.group("season_s") or match.group("season_x")
@@ -88,6 +91,23 @@ def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     right = text[match.end() :]
 
     return season.zfill(2), episode.zfill(2), left, right
+
+
+def extract_movie_name(text: str) -> tuple[str, str]:
+    """
+    Extract movie name and year.
+
+    E.g., "Inception.2010.1080p.x265" -> ("Inception", "2010")
+    """
+    # The assumption is that all the filename is starting with $MOVIE_NAME.$YEAR.$EXTRA
+    # Search the year pattern
+    match = re.search(r"(?i)(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
+    if match:
+        year = match.group(1)
+        left = text[: match.start()]
+        right = text[match.end() :]
+        return f"{left.strip(" ._-")}.{year}", right
+    return text, ""
 
 
 def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, str]:
@@ -123,7 +143,7 @@ def extract_resolution(text: str) -> Optional[str]:
     return None
 
 
-def parse_filename(filename: str) -> ParsedFileInfo:
+def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     """
     Parse a video filename and extract structured information.
 
@@ -153,9 +173,14 @@ def parse_filename(filename: str) -> ParsedFileInfo:
     # Try to extract release group first (usually at the end)
     release_group, stem = extract_through_pattern(RELEASE_GROUP_PATTERN, stem)
 
-    # Extract season and episode
-    season, episode, show_name, unparsed = extract_season_episode(stem)
-    logger.debug(f"Found season: {season}, episode: {episode}")
+    if is_show:
+        # Extract season and episode
+        season, episode, show_name, unparsed = extract_season_episode(stem)
+        logger.debug(f"Found season: {season}, episode: {episode}")
+    else:
+        # Grab the year of a movie
+        season, episode = "", ""
+        show_name, unparsed = extract_movie_name(stem)
 
     # Extract show name (everything before SxxEyy)
     show_name = normalize_separators(show_name)
@@ -164,6 +189,8 @@ def parse_filename(filename: str) -> ParsedFileInfo:
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
     codec, unparsed = extract_through_known_lists(CODECS, unparsed)
     source, unparsed = extract_through_known_lists(SOURCES, unparsed)
+    package, unparsed = extract_through_known_lists(PACKAGE, unparsed, repeated=True)
+    feature, unparsed = extract_through_known_lists(FEATURE, unparsed, repeated=True)
     audio_codec, unparsed = extract_through_known_lists(
         AUDIO_CODECS, unparsed, repeated=True
     )
@@ -187,11 +214,13 @@ def parse_filename(filename: str) -> ParsedFileInfo:
         title=title,
         resolution=resolution,
         codec=codec,
+        source=source,
+        package=package,
+        feature=feature,
         audio_codec=audio_codec,
         lang=lang,
         extra=unparsed,
         release_group=release_group or "",
         extension=extension,
         original_filename=filename,
-        source=source or "",
     )

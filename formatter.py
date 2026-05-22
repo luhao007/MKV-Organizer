@@ -5,7 +5,9 @@ from typing import Iterable
 from config import (
     AUDIO_CODECS,
     CODECS,
+    FEATURE,
     LANGUAGES,
+    PACKAGE,
     SOURCES,
     STOPWORDS,
     WORD_SPLIT_PATTERN,
@@ -85,8 +87,8 @@ def format_title(title: str) -> str:
     if not title:
         return ""
 
-    # Remove commas (they're noise in filenames)
-    title = title.replace(",", "")
+    # Remove characters that are not be able to be used in filenames
+    title = title.replace(",", "").replace("?", "").replace("!", "")
 
     # Split on separators while preserving the structure
     tokens = [t for t in WORD_SPLIT_PATTERN.split(title) if t]
@@ -128,9 +130,11 @@ def build_filename(
     title: str,
     resolution: str = "",
     codec: str = "",
+    feature: str = "",
+    source: str = "",
+    package: str = "",
     audio_codec: str = "",
     lang: str = "",
-    source: str = "",
     extra: str = "",
     release_group: str = "",
 ) -> str:
@@ -162,7 +166,9 @@ def build_filename(
         format_title(title),
         format_resolution(resolution),
         format_known(source, SOURCES),
+        format_known(package, PACKAGE),
         format_known(codec, CODECS),
+        format_known(feature, FEATURE),
         format_known(audio_codec, AUDIO_CODECS),
         format_known(lang, LANGUAGES),
         extra,

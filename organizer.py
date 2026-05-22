@@ -7,16 +7,12 @@ from parser import parse_filename
 from pathlib import Path
 from typing import Optional
 
-from config import EPISODE_NAME_FILE, LANGUAGES, VIDEO_FORMATS
+from config import EPISODE_NAME_FILE, LANGUAGES, METADATA_FORMATS, VIDEO_FORMATS
 from media_info import extract_media_info
-from models import FileDefinition
+from models import FileDefinition, FileOrganization
 from utils import get_logger
 
 logger = get_logger(__name__)
-
-# Type alias for organization structure
-# season -> episode -> extension -> FileDefinition
-FileOrganization = dict[str, dict[str, dict[str, FileDefinition]]]
 
 
 def is_video_file(filename: str) -> bool:
@@ -125,7 +121,12 @@ def organize_files(
     skipped_count = 0
 
     for filename in os.listdir(folder):
-        if filename == EPISODE_NAME_FILE:
+        if "." not in filename:
+            logger.debug(f"Skipping file with no extension: {filename}")
+            continue
+        ext = os.path.splitext(filename)[1][1:].lower()  # get extension without dot
+        if ext in METADATA_FORMATS:
+            logger.debug(f"Skipping metadata file: {filename}")
             continue
         full_path = os.path.join(folder, filename)
 
@@ -233,6 +234,11 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
         or not primary.parsed.codec
         or not primary.parsed.audio_codec
     ):
+        logger.info(
+            f"Extracting media info for primary video: {primary.filename} \n"
+            f"Current parsed: resolution={primary.parsed.resolution}, "
+            f"codec={primary.parsed.codec}, audio_codec={primary.parsed.audio_codec}"
+        )
         if not primary.media:
             primary.media = extract_media_info(primary.filename)
         primary.parsed.resolution = (
@@ -269,10 +275,12 @@ def build_new_filename(
         episode=parsed.episode,
         title=parsed.title,
         resolution=parsed.resolution,
+        source=parsed.source,
+        package=parsed.package,
         codec=parsed.codec,
+        feature=parsed.feature,
         audio_codec=parsed.audio_codec,
         lang=parsed.lang if include_language else "",
-        source=parsed.source,
         extra=parsed.extra,
         release_group=parsed.release_group,
     )
