@@ -129,10 +129,18 @@ def extract_through_known_lists(
     # Sort by length to ensure longer matches are found first
     # (e.g., "AMZN.WEB-DL" before "WEB-DL")
     pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
-    if repeated:
-        pattern_str = rf"({pattern_str})(\.({pattern_str}))*"
     pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
-    return extract_through_pattern(pattern, text)
+    extracted, remaining = extract_through_pattern(pattern, text)
+    if not repeated or not extracted:
+        return extracted, remaining
+
+    # For repeated patterns, we need to find all occurrences
+    extraced_new, remaining = extract_through_pattern(pattern, remaining)
+    while extraced_new:
+        extracted = ".".join([extracted, extraced_new])
+        extraced_new, remaining = extract_through_pattern(pattern, remaining)
+
+    return extracted, remaining
 
 
 def extract_resolution(text: str) -> Optional[str]:
@@ -175,7 +183,9 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     # Remove common noise prefixes that are not part of the title
     stem = strip_noise_prefix(stem)
 
-    # Try to extract release group first (usually at the end)
+    # Extract language tags first (at the end)
+    lang, stem = extract_through_known_lists(LANGUAGES, stem, repeated=True)
+    # Then extract release group (usually at the end after a hyphen)
     release_group, stem = extract_through_pattern(RELEASE_GROUP_PATTERN, stem)
 
     if is_show:
@@ -199,7 +209,6 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     audio_codec, unparsed = extract_through_known_lists(
         AUDIO_CODECS, unparsed, repeated=True
     )
-    lang, unparsed = extract_through_known_lists(LANGUAGES, unparsed, repeated=True)
 
     # Extract title directly
     title = strip_trailing_metadata(unparsed)
@@ -208,8 +217,9 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
 
     logger.debug(
         f"Extracted: show={show_name}, title={title}, resolution={resolution},"
-        f" codec={codec}, source={source}, audio_codec={audio_codec}, lang={lang},"
-        f" extra={unparsed}"
+        f" codec={codec}, source={source}, package={package}, feature={feature},"
+        f" audio_codec={audio_codec}, lang={lang}, extra={unparsed},"
+        f" extension={extension}, release_group={release_group}"
     )
 
     return ParsedFileInfo(

@@ -38,6 +38,7 @@ FEATURE: Final = [
     "DV",
     "DolbyVision",
     "DoVi",
+    "HYBRID",  # DoVi falls back to HDR10 if DoVi not supported
 ]
 
 _WEB_SOURCES: Final = [
@@ -55,14 +56,20 @@ SOURCES: Final = [
     "WEB.DL",
     "WEB-DL",
     "WEBRip",
+    "UHD.BluRay",
     "BluRay",
     "BDRip",
     "BRRip",
     "DVD",
     "DVDRip",
 ] + list(map(".".join, itertools.product(_WEB_SOURCES, ["WEB-DL", "WEB.DL", "WEBRip"])))
+SOURCE_RENAME_MAPPINGS: Final = {
+    "WEB.DL": "WEB-DL",
+    "WEBRip": "WEB-DL",
+    "UHD.BluRay": "BluRay",
+}
 
-PACKAGE: Final = ["INITIAL", "PROPER", "REPACK", "REMUX", "HYBRID", "MULTI"]
+PACKAGE: Final = ["INITIAL", "PROPER", "REPACK", "REMUX", "MULTI"]
 
 _AUDIO_CODECS = [
     "AC3",
@@ -71,7 +78,6 @@ _AUDIO_CODECS = [
     "DTS-HD",
     "DTS-HD.MA",
     "TrueHD",
-    "TrueHD.7.1",
     "Atmos",
     "FLAC",
     "MP3",

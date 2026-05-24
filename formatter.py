@@ -1,6 +1,7 @@
 """Format and capitalize video filenames according to naming conventions."""
 
-from typing import Iterable
+import re
+from typing import Iterable, Optional
 
 from config import (
     AUDIO_CODECS,
@@ -8,6 +9,7 @@ from config import (
     FEATURE,
     LANGUAGES,
     PACKAGE,
+    SOURCE_RENAME_MAPPINGS,
     SOURCES,
     STOPWORDS,
     WORD_SPLIT_PATTERN,
@@ -106,14 +108,23 @@ def format_resolution(resolution: str) -> str:
     return resolution.lower() if resolution else ""
 
 
-def format_known(value: str, known_list: Iterable[str]) -> str:
+def format_known(
+    value: str,
+    known_list: Iterable[str],
+    rename_mapping: Optional[dict[str, str]] = None,
+) -> str:
     """Format a value by matching it against a known list (case-insensitive)."""
     if not value:
         return ""
 
-    for known in known_list:
-        if value.lower() == known.lower():
-            return known
+    mapping = dict([(known, known) for known in known_list])
+
+    if rename_mapping:
+        mapping.update(rename_mapping)
+
+    for alias, standard in mapping.items():
+        if alias.lower() in value.lower():
+            value = re.sub(alias, standard, value, flags=re.IGNORECASE)
 
     return value
 
@@ -165,7 +176,7 @@ def build_filename(
         f"S{season}E{episode}",
         format_title(title),
         format_resolution(resolution),
-        format_known(source, SOURCES),
+        format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS),
         format_known(package, PACKAGE),
         format_known(codec, CODECS),
         format_known(feature, FEATURE),
