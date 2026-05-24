@@ -167,6 +167,11 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     stem = path.stem
     extension = path.suffix.lstrip(".").lower()
 
+    # Special handling for thumbnail images (e.g., "Show.Name.S01E10-thumb.jpg")
+    if extension == "jpg" and stem.lower().endswith("-thumb"):
+        extension = "thumb.jpg"
+        stem = stem[:-6]  # Remove '-thumb' from the stem for parsing
+
     # Remove common noise prefixes that are not part of the title
     stem = strip_noise_prefix(stem)
 

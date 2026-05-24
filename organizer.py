@@ -125,9 +125,6 @@ def organize_files(
             logger.debug(f"Skipping file with no extension: {filename}")
             continue
         ext = os.path.splitext(filename)[1][1:].lower()  # get extension without dot
-        if ext in METADATA_FORMATS:
-            logger.debug(f"Skipping metadata file: {filename}")
-            continue
         full_path = os.path.join(folder, filename)
 
         # Skip directories
@@ -145,7 +142,7 @@ def organize_files(
         try:
             parsed = parse_filename(filename)
             parsed_count += 1
-        except ValueError as e:
+        except BaseException as e:
             logger.error(f"Skipping {filename}: {e}")
             traceback.print_exc()
             skipped_count += 1
@@ -168,10 +165,15 @@ def organize_files(
         # Detect subtitle
         if is_subtitle_file(filename):
             file_def.is_subtitle = True
+            file_def.is_media = False
             file_def.subtitle_lang = get_subtitle_language(filename)
             logger.debug(
                 f"Detected subtitle file: {filename} (lang: {file_def.subtitle_lang})"
             )
+        elif is_video_file(filename):
+            file_def.is_subtitle = False
+            file_def.is_media = True
+            logger.debug(f"Detected video file: {filename}")
 
         # Organize by season/episode
         season = parsed.season
@@ -221,7 +223,7 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
     # Find primary video file
     primary = None
     for file_def in files:
-        if is_video_file(file_def.filename):
+        if file_def.is_media:
             primary = file_def
             break
 
@@ -285,7 +287,10 @@ def build_new_filename(
         release_group=parsed.release_group,
     )
 
-    return f"{base}.{parsed.extension}"
+    if parsed.extension == "thumb.jpg":
+        return f"{base}-thumb.jpg"
+    else:
+        return f"{base}.{parsed.extension}"
 
 
 def rename_files(

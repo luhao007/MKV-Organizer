@@ -78,6 +78,7 @@ class FileDefinition:
 
     # Whether this is a subtitle file
     is_subtitle: bool = False
+    is_media: bool = False
     subtitle_lang: str = ""  # e.g., "chs", "eng", "cht&eng"
 
 
