@@ -1,5 +1,7 @@
 """Extract metadata from video files using MediaInfo."""
 
+import os
+import re
 import traceback
 from typing import Optional
 
@@ -74,32 +76,41 @@ def extract_height(video_track: Track) -> Optional[int]:
     return None
 
 
-def guess_video_codec(track: Track) -> str:
+def _extract_info(track: Track, field: str) -> str:
+    info: str | int | list[str | int] | None = getattr(track, field)
+    if info is None:
+        return ""
+    if isinstance(info, list):
+        info = ",".join([str(i) for i in info])
+    return str(info).strip().lower()
+
+
+def extract_video_codec(track: Track) -> str:
     """
-    Guess video codec from format/codec fields.
+    Extract video codec from format/codec fields.
 
     Common mappings:
-    - HEVC / H.265 / hvc1 / hev1 -> x265
-    - AVC / H.264 / avc1 -> x264
+    - HEVC / H.265 / hvc1 / hev1 -> HEVC
+    - AVC / H.264 / avc1 -> H264
     - AV1 -> AV1
     - XviD -> XviD
     - DivX -> DivX
     """
-    fmt: str = (getattr(track, "format", "") or "").lower()
-    fmt_ver: str = (getattr(track, "format_version", "") or "").lower()
-    codec: str = (getattr(track, "codec", "") or "").lower()
-    codec_id: str = (getattr(track, "codec_id", "") or "").lower()
+    fmt = _extract_info(track, "format")
+    fmt_ver = _extract_info(track, "format_version")
+    codec = _extract_info(track, "codec")
+    codec_id = _extract_info(track, "codec_id")
     codec = codec or codec_id  # Some formats use codec_id instead of codec
 
     combined = fmt + codec
 
-    # HEVC / H.265 -> x265
+    # HEVC / H.265 -> HEVC
     if any(x in combined for x in ["hevc", "hvc1", "hev1", "h.265", "h265"]):
-        return "x265"
+        return "HEVC"
 
     # AVC / H.264 -> x264
     if any(x in combined for x in ["avc", "h.264", "h264", "avc1"]):
-        return "x264"
+        return "H264"
 
     # AV1
     if "av1" in combined:
@@ -125,65 +136,151 @@ def guess_video_codec(track: Track) -> str:
     )
 
 
-def guess_audio_codec(track: Track) -> str:
+def extract_hdr(track: Track) -> str:
+    """
+    Extract HDR format information from MediaInfo track.
+
+    Tries to extract Dolby Vision profile (e.g., "DV 8.1", "DV 7.6") first.
+    If DV is not available, checks for HDR10/HLG and returns "HDR".
+    Otherwise returns "SDR".
+
+    Returns:
+        One of:
+        - "DV X.Y" for Dolby Vision content (e.g., "DV 8.1", "DV 7.6")
+        - "DV" if Dolby Vision is detected but profile can't be extracted
+        - "HDR" for HDR10 / HDR10+ / HLG content
+        - "SDR" for standard dynamic range
+    """
+    hdr_format = _extract_info(track, "hdr_format")
+    hdr_format_commercial = _extract_info(track, "hdr_format_commercial")
+    hdr_format_compatibility = _extract_info(track, "hdr_format_compatibility")
+    hdr_format_profile = _extract_info(track, "hdr_format_profile")
+    other_hdr_format = _extract_info(track, "other_hdr_format")
+
+    # Try to extract Dolby Vision profile
+    # https://dolby.my.salesforce.com/sfc/p/700000009YuG/a/4u000000l6G4/4R18riPaaW3gxpVx7XwyQLdEITLFjB.w.Si0LoQR5j8:w
+    if "profile" in other_hdr_format:
+        # Some video already put a DV profile in other_hdr_format
+        dv_profile = re.search(r"profile: (\d{2}\.\d{2})", other_hdr_format)
+        if dv_profile:
+            return f"DV {dv_profile.group(1)}"
+    # Try to extract DV profile from hdr_format_profile
+    if (
+        "dolby vision" in hdr_format
+        or "dolby vision" in hdr_format_commercial
+        or "dv" in hdr_format_profile
+    ):
+        # DV profile is usually stored in hdr_format_profile
+        # Typical format: "dvhe.08" or "dvav.09"
+        dv_match = re.match(
+            r"dv(?:he|h1|av)\.(\d{2})", hdr_format_profile, re.IGNORECASE
+        )
+        if dv_match:
+            profile = int(dv_match.group(1))
+            if hdr_format_compatibility.startswith("hdr"):
+                comp_id = 1
+            elif hdr_format_compatibility.startswith("sdr"):
+                comp_id = 2
+            elif hdr_format_compatibility.startswith("hlg"):
+                comp_id = 4
+            elif hdr_format_compatibility.startswith("blu-ray"):
+                comp_id = 6
+            else:
+                comp_id = 0
+            if comp_id:
+                ret = f"DV {profile}.{comp_id}"
+            else:
+                ret = f"DV {profile}"
+            if profile == 7:
+                if "fel" in _extract_info(track, "hdr_format_settings"):
+                    ret += " FEL"
+                else:
+                    # BL+EL+RPU
+                    ret += " MEL"
+            return ret
+
+        # Dolby Vision detected but profile could not be parsed
+        return "DV"
+
+    # Check for HDR (HDR10, HDR10+, HLG, SMPTE ST 2086, etc.)
+    if "hdr10+" in hdr_format_profile:
+        return "HDR Plus"
+    elif "hlg" in hdr_format_profile:
+        return "HLG"
+    elif "hdr" in hdr_format_compatibility or "hdr" in hdr_format_commercial:
+        return "HDR"
+
+    return "SDR"
+
+
+def extract_channels(track: Track) -> str:
+    channels = _extract_info(track, "channels") or _extract_info(track, "channel_s")
+    if not channels:
+        channel_layout = _extract_info(track, "channel_layout")
+        if channel_layout:
+            channels = len(channel_layout.split(" "))
+        else:
+            return ""
+    channels = int(channels)
+
+    if channels == 8:
+        return "7.1"
+    elif channels == 6:
+        return "5.1"
+    elif channels == 2:
+        return "2.0"
+    else:
+        raise ValueError(f"Unknown AC-3 channel configuration: {channels}")
+
+
+def extract_audio_codec(track: Track) -> str:
     """
     Guess audio codec from format/codec fields.
 
     Common mappings:
     - AAC -> AAC
-    - AC-3 -> AC3 or DD.5.1
-    - E-AC-3 -> DDP
+    - AC-3 -> AC3
+    - E-AC-3 -> EAC3
     - DTS / DTS-HD -> DTS
     - FLAC -> FLAC
     - MP3 -> MP3
     - Opus -> Opus
     """
-    fmt: str = (getattr(track, "format", "") or "").lower()
-    codec: str = (getattr(track, "codec", "") or "").lower()
-    codec_id: str = (getattr(track, "codec_id", "") or "").lower()
+    fmt = _extract_info(track, "format")
+    codec = _extract_info(track, "codec")
+    codec_id = _extract_info(track, "codec_id")
     codec = codec or codec_id  # Some formats use codec_id instead of codec
-    commercial_name: str = (getattr(track, "commercial_name", "") or "").lower()
-
-    def get_channels(track: Track) -> str:
-        channels = getattr(track, "channels", 0)
-        if not channels:
-            return ""
-
-        if channels == 8:
-            return "7.1"
-        elif channels == 6:
-            return "5.1"
-        elif channels == 2:
-            return "2.0"
-        else:
-            raise ValueError(f"Unknown AC-3 channel configuration: {channels}")
+    commercial_name = _extract_info(track, "commercial_name")
+    fmt_info = _extract_info(track, "format_info")
 
     if "aac" in fmt:
-        return "AAC"
-    if any(x in fmt for x in ["ac-3", "ac3"]) or "ac3" in codec:
-        channels = get_channels(track)
-        # Just use "AC3" if we can't determine channels
-        # otherwise use "DD.5.1", "DD.7.1", etc.
-        return f"DD.{channels}" if channels else "AC3"
-    if any(x in fmt for x in ["e-ac-3", "eac3"]):
-        channels = get_channels(track)
-        return f"DDP.{channels}" if channels else "DDP"
-    if "dts" in fmt or "dts" in codec:
-        if commercial_name == "dts-hd master audio":
-            return "DTS-HD MA"
-        elif "dts-hd" in commercial_name:
-            return "DTS-HD"
+        ret = "AAC"
+    elif any(x in fmt for x in ["e-ac-3", "eac3"]):
+        ret = "EAC3"
+        if "atmos" in commercial_name or any(
+            x in fmt_info for x in ["JOC", "Joint Object Coding"]
+        ):
+            ret += ".Atmos"
+    elif any(x in fmt for x in ["ac-3", "ac3"]) or "ac3" in codec:
+        ret = "DD"
+    elif "dts" in fmt or "dts" in codec:
+        if "x" in commercial_name:
+            ret = "DTS:X"
+        elif "hd" in commercial_name:
+            ret = "DTS-HD"
+            if any(x in commercial_name for x in ["ma", "master audio"]):
+                ret += " MA"
         else:
-            return "DTS"
-    if "mlp" in fmt or "truehd" in codec:
-        ret = "TrueHD.Atmos" if "Atmos" in commercial_name else "TrueHD"
-        channels = get_channels(track)
-        return f"{ret}.{channels}" if channels else ret
-    if "opus" in fmt or "opus" in codec:
-        return "Opus"
-    if "flac" in fmt or "flac" in codec:
-        return "FLAC"
-    if "mpeg audio" in fmt:
+            ret = "DTS"
+    elif "mlp" in fmt or "truehd" in codec:
+        ret = "TrueHD"
+        if "fba" in fmt or "atmos" in commercial_name:
+            ret += ".Atmos"
+    elif "opus" in fmt or "opus" in codec:
+        ret = "Opus"
+    elif "flac" in fmt or "flac" in codec:
+        ret = "FLAC"
+    elif "mpeg audio" in fmt:
         format_profile = (getattr(track, "format_profile", "") or "").lower()
         if "layer 2" in format_profile:
             return "MP2"
@@ -191,8 +288,35 @@ def guess_audio_codec(track: Track) -> str:
             return "MP3"
         else:
             raise ValueError(f"Unknown MPEG Audio format profile: {format_profile}")
+    else:
+        raise ValueError(f"Unknown audio codec for format='{fmt}', codec='{codec}'")
 
-    raise ValueError(f"Unknown audio codec for format='{fmt}', codec='{codec}'")
+    channels = extract_channels(track)
+    if channels:
+        ret += f".{channels}"
+    return ret
+
+
+def extract_source(track: Track) -> str:
+    source = _extract_info(track, "source")
+    if "blu-ray" in source:
+        return "blu-ray"
+    else:
+        return ""
+
+
+def _get_tracks(media_info: MediaInfo, track_type: str) -> list[Track]:
+    """
+    Get tracks of a specific type from MediaInfo.
+
+    Args:
+        media_info: MediaInfo object
+        track_type: Type of track to get (e.g., "video", "audio")
+
+    Returns:
+        List of Track objects
+    """
+    return getattr(media_info, track_type + "_tracks", [])
 
 
 def extract_media_info(video_path: str) -> MediaMetadata:
@@ -208,6 +332,8 @@ def extract_media_info(video_path: str) -> MediaMetadata:
     metadata = MediaMetadata()
 
     logger.debug(f"Extracting media info from: {video_path}")
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file not found: {video_path}")
 
     try:
         media_info = MediaInfo.parse(video_path)
@@ -216,7 +342,7 @@ def extract_media_info(video_path: str) -> MediaMetadata:
         return metadata
 
     # Extract from video track
-    video_tracks = getattr(media_info, "video_tracks", [])
+    video_tracks = _get_tracks(media_info, "video")
     if not video_tracks:
         logger.warning(f"No video tracks found in {video_path}")
         return metadata
@@ -233,7 +359,7 @@ def extract_media_info(video_path: str) -> MediaMetadata:
 
     # Extract codec
     try:
-        codec = guess_video_codec(video_track)
+        codec = extract_video_codec(video_track)
         metadata.codec = codec
         logger.debug(f"Extracted codec: {metadata.codec}")
     except ValueError as e:
@@ -241,19 +367,38 @@ def extract_media_info(video_path: str) -> MediaMetadata:
         logger.debug(f"Traceback: {traceback.format_exc()}")
         metadata.codec = ""
 
-    # Extract audio codec from first audio track
+    # Extract HDR format
+    try:
+        hdr = extract_hdr(video_track)
+        metadata.hdr = hdr
+        logger.debug(f"Extracted HDR: {metadata.hdr}")
+    except Exception as e:
+        logger.warning(f"Failed to extract HDR info for {video_path}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+
+    # Extract audio codec
     audio_codecs: set[str] = set()
-    for audio_track in getattr(media_info, "audio_tracks", []):
+    for audio_track in _get_tracks(media_info, "audio"):
         try:
-            audio_codec = guess_audio_codec(audio_track)
+            audio_codec = extract_audio_codec(audio_track)
             logger.debug(f"Extracted audio codec: {audio_codec}")
-            audio_codecs.add(audio_codec)
-            break  # Use the first audio track's codec
+            if audio_codec:
+                audio_codecs.add(audio_codec)
         except ValueError as e:
             logger.warning(f"Failed to guess audio codec for {video_path}")
+            logger.debug(f"Track info: {audio_track.to_data()}")
             logger.debug(f"Traceback: {traceback.format_exc()}")
             continue
-    if audio_codecs:
-        metadata.audio_codec = ".".join(audio_codecs)
 
+    def find_best_audio_codec(audio_codecs: set[str]) -> str:
+        # Return the best audio codec if we have multiple
+        best_codecs = ["TrueHD", "DTS", "FLAC", "DDP", "DD", "AC3", "AAC"]
+
+        for best_codec in best_codecs:
+            for codec in audio_codecs:
+                if best_codec in codec:
+                    return codec
+        return ", ".join(audio_codecs)
+
+    metadata.audio_codec = find_best_audio_codec(audio_codecs)
     return metadata

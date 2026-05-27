@@ -12,6 +12,7 @@ VIDEO_FORMATS: Final = ["mkv", "mp4", "avi", "ts", "mpeg", "mpg", "mov", "wmv"]
 SUBTITLE_FORMATS: Final = ["srt", "ass", "ssa", "sub", "vtt"]
 METADATA_FORMATS: Final = ["nfo", "txt", "info", "jpg", "jpeg", "png"]
 LANGUAGES: Final = {"chs", "cht", "chs&eng", "cht&eng", "eng", "fra", "zh", "en"}
+
 CODECS: Final = [
     "x264",
     "H264",
@@ -29,7 +30,13 @@ CODECS: Final = [
     "MPEG-2",
     "VP9",
 ]
-FEATURE: Final = [
+CODECS_RENAME_MAPPING = {
+    "H265": "HEVC",
+    "H.265": "HEVC",
+    "x265": "HEVC",
+}
+
+HDR: Final = [
     "HDR",
     "HDR10",
     "10bit",
@@ -40,6 +47,7 @@ FEATURE: Final = [
     "DoVi",
     "HYBRID",  # DoVi falls back to HDR10 if DoVi not supported
 ]
+HDR_RENAME_MAPPING: Final = {"DoVi": "DV", "DolbyVision": "DV", "HDR10": "HDR"}
 
 _WEB_SOURCES: Final = [
     "YTB",  # YouTube
@@ -72,24 +80,25 @@ SOURCE_RENAME_MAPPINGS: Final = {
 PACKAGE: Final = ["INITIAL", "PROPER", "REPACK", "REMUX", "MULTI"]
 
 _AUDIO_CODECS = [
-    "AC3",
-    "AAC",
-    "DTS",
-    "DTS-HD",
-    "DTS-HD.MA",
+    "TrueHD.Atmos",
     "TrueHD",
-    "Atmos",
+    "DTS-HD.MA",
+    "DTS-HD",
+    "DTS",
+    "DDP.Atmos",
+    "DDP",
+    "DD",
+    "AC3",
     "FLAC",
+    "AAC",
     "MP3",
     "MP2",
     "Opus",
 ]
-_AUDIO_CODECS_WITH_CHANNELS = ["DD", "DDP", "TrueHD", "TrueHD.Atmos"]
+_AUDIO_CODECS_WITH_CHANNELS = ["DD", "DDP", "DDP.Atmos", "TrueHD", "TrueHD.Atmos"]
 _CHANNELS = ["2.0", "5.1", "7.1"]
-AUDIO_CODECS: Final = (
-    _AUDIO_CODECS
-    + _AUDIO_CODECS_WITH_CHANNELS
-    + list(map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
+AUDIO_CODECS: Final = _AUDIO_CODECS + list(
+    map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS))
 )
 
 
@@ -131,6 +140,7 @@ EPISODE_NAME_FILE: Final = "episode_names.txt"
 # E.g., "...-RARBG", "...-DEFLATE", "...-GROUP_NAME"
 
 RELEASE_GROUP_PATTERN: Final = re.compile(r"-([A-Za-z0-9][A-Za-z0-9_]{1,30})$")
+
 
 # Logging Configuration
 # ============================================================================

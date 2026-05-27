@@ -19,7 +19,7 @@ class ParsedFileInfo:
     codec: str = ""  # x264, x265, AV1, etc.
     source: str = ""  # e.g., WEB-DL, HDTV
     package: str = ""  # e.g., PROPER, REPACK
-    feature: str = ""  # e.g., HDR, 10bit, DV
+    hdr: str = ""  # e.g., HDR, 10bit, DV
     audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
     lang: str = ""  # e.g., chs, eng
     extra: str = ""  # Any extra info that doesn't fit into other fields
@@ -38,10 +38,11 @@ class MediaMetadata:
 
     resolution: str = ""
     codec: str = ""
+    hdr: str = ""  # e.g., HDR, DV 8.1, SDR
     source: str = ""  # e.g., WEB-DL, HDTV
     audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
-    lang: str = ""  # e.g., chs, eng
-    extra: str = ""  # Any extra info that doesn't fit into other fields
+    lang: str = ""  # TODO: placeholder for future, e.g., chs, eng
+    extra: str = ""  # TODO: placeholder for future
 
     def __bool__(self):
         """Return True if any metadata field is populated."""
@@ -51,6 +52,7 @@ class MediaMetadata:
             [
                 self.resolution,
                 self.codec,
+                self.hdr,
                 self.source,
                 self.audio_codec,
                 self.lang,

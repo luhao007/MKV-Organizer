@@ -6,7 +6,8 @@ from typing import Iterable, Optional
 from config import (
     AUDIO_CODECS,
     CODECS,
-    FEATURE,
+    HDR,
+    HDR_RENAME_MAPPING,
     LANGUAGES,
     PACKAGE,
     SOURCE_RENAME_MAPPINGS,
@@ -66,7 +67,7 @@ def capitalize_word(word: str, is_first: bool = False) -> str:
     return prefix + capitalized + suffix
 
 
-def format_title(title: str) -> str:
+def format_title(title: str, style: int = 1) -> str:
     """
     Format a title using title case conventions.
 
@@ -100,7 +101,8 @@ def format_title(title: str) -> str:
         capitalize_word(token, is_first=(i == 0)) for i, token in enumerate(tokens)
     ]
 
-    return ".".join(capitalized_tokens)
+    separator = "." if style == 1 else " "
+    return separator.join(capitalized_tokens)
 
 
 def format_resolution(resolution: str) -> str:
@@ -112,6 +114,7 @@ def format_known(
     value: str,
     known_list: Iterable[str],
     rename_mapping: Optional[dict[str, str]] = None,
+    style: int = 1,
 ) -> str:
     """Format a value by matching it against a known list (case-insensitive)."""
     if not value:
@@ -126,22 +129,26 @@ def format_known(
         if alias.lower() in value.lower():
             value = re.sub(alias, standard, value, flags=re.IGNORECASE)
 
+    if style != 1:
+        # Use space as separator
+        value = value.replace(".", " ")
+        # Handle audio channel
+        channels = ["2.0", "5.1", "7.1"]
+        for channel in channels:
+            value = value.replace(channel.replace(".", " "), channel)
     return value
 
 
-def format_show_name(show_name: str) -> str:
-    """Format show/series name using title case."""
-    return format_title(show_name)
-
-
 def build_filename(
+    style: int,
     show_name: str,
     season: str,
     episode: str,
     title: str,
+    year: str = "",
     resolution: str = "",
     codec: str = "",
-    feature: str = "",
+    hdr: str = "",
     source: str = "",
     package: str = "",
     audio_codec: str = "",
@@ -159,6 +166,7 @@ def build_filename(
         season: Season number (should be 2 digits like "01")
         episode: Episode number (should be 2 digits like "10")
         title: Episode title
+        year: Release year
         resolution: Video resolution (e.g., "1080p")
         codec: Video codec (e.g., "x265")
         audio_codec: Audio codec (e.g., "DD5.1")
@@ -170,24 +178,51 @@ def build_filename(
     Returns:
         Formatted filename without extension
     """
-    # Build parts list (skip empty parts)
-    parts = [
-        format_show_name(show_name),
-        f"S{season}E{episode}",
-        format_title(title),
-        format_resolution(resolution),
-        format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS),
-        format_known(package, PACKAGE),
-        format_known(codec, CODECS),
-        format_known(feature, FEATURE),
-        format_known(audio_codec, AUDIO_CODECS),
-        format_known(lang, LANGUAGES),
-        extra,
-    ]
-    parts = [p for p in parts if p]
 
-    # Join with dots
-    filename = ".".join(parts)
+    if style == 1:
+        # Build parts list (skip empty parts)
+        parts = [
+            format_title(show_name, 1),
+            year,
+            f"S{season}E{episode}" if season and episode else "",
+            format_title(title, 1),
+            format_resolution(resolution),
+            format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=1),
+            format_known(package, PACKAGE, style=1),
+            format_known(codec, CODECS, style=1),
+            format_known(hdr, HDR, HDR_RENAME_MAPPING, style=1),
+            format_known(audio_codec, AUDIO_CODECS, style=1),
+            format_known(lang, LANGUAGES, style=1),
+            extra,
+        ]
+        parts = [p for p in parts if p]
+
+        # Join with dots
+        filename = ".".join(parts)
+    elif style == 2:
+        filename = format_title(show_name, 2)
+        if year:
+            filename += f" ({year})"
+        if season and episode:
+            filename += f" S{season}E{episode}"
+        if title:
+            filename += f" - {format_title(title, 2)}"
+
+        parts = [
+            format_resolution(resolution),
+            format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=2),
+            format_known(package, PACKAGE, style=2),
+            format_known(codec, CODECS, style=2),
+            format_known(hdr, HDR, HDR_RENAME_MAPPING, style=2),
+            format_known(audio_codec, AUDIO_CODECS, style=2),
+            format_known(lang, LANGUAGES, style=2),
+            extra,
+        ]
+        parts = [p for p in parts if p]
+        if parts:
+            filename += f" {''.join(f'[{part}]' for part in parts)}"
+    else:
+        raise ValueError("Unknown style")
 
     # Add release group if present
     if release_group:

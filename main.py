@@ -2,6 +2,7 @@
 
 import argparse
 import os
+from argparse import RawTextHelpFormatter
 
 from config import setup_logging
 from organizer import (
@@ -19,7 +20,8 @@ from utils import get_logger
 def main():
     """Main entry point for MKV Organizer."""
     parser = argparse.ArgumentParser(
-        description="Organize and rename video files with standardized naming scheme"
+        description="Organize and rename video files with standardized naming scheme",
+        formatter_class=RawTextHelpFormatter,
     )
     parser.add_argument(
         "folder",
@@ -93,6 +95,22 @@ def main():
             "If SHOW_NAME is omitted, auto-detect show name from filenames"
         ),
     )
+    parser.add_argument(
+        "-s",
+        "--style",
+        type=int,
+        default=1,
+        help=(
+            "Style to be used for the name:\n"
+            "  TV Show:\n"
+            "    Style 1: Show.Name.SxxExx.Title.META1.META2.[...].mkv\n"
+            "    Style 2: Show Name SxxExx (Title) [META1][META2][...].mkv\n"
+            "  Movie:\n"
+            "    Style 1: Movie.Name.Year.META1.META2.[...].mkv\n"
+            "    Style 2: Movie Name (Year) [META1][META2][...].mkv\n"
+            "Note: Language will always be split by '.' before extension"
+        ),
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -103,7 +121,8 @@ def main():
     if args.folder:
         folder = args.folder
     else:
-        raise ValueError("No folder specified. Please provide a folder as an argument.")
+        parser.print_help()
+        return 0
 
     # Verify folder exists
     if not os.path.isdir(folder):
@@ -142,9 +161,7 @@ def main():
         # Fetch episode names from TMDB if requested
         if args.fetch_tmdb is not None:
             show_name = args.fetch_tmdb if args.fetch_tmdb != "__auto__" else None
-            success = fetch_and_save_episode_names(organized, folder, show_name)
-            if not success:
-                return 1
+            fetch_and_save_episode_names(organized, folder, show_name)
 
         # Rename files
         include_language = not args.no_language
@@ -152,6 +169,7 @@ def main():
             organized,
             dry_run=dry_run,
             include_language=include_language,
+            style=args.style,
         )
 
         if ren_count:

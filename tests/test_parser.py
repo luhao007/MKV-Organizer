@@ -1,112 +1,217 @@
 import unittest
 from parser import parse_filename
+from typing import Final, NotRequired, TypedDict
+
+
+class TestScenario(TypedDict):
+    filename: str
+    expected: dict[str, str]
+    is_show: NotRequired[bool]  # Default to True
+
+
+TestScenarios = dict[str, TestScenario]
 
 
 class TestParserSeasonEpisodePatterns(unittest.TestCase):
-    def test_sxxeyy_pattern(self):
-        parsed = parse_filename("Air.Crash.Investigations.S03E07.avi")
+    """Test cases for basic season/episode patterns"""
 
-        self.assertEqual(parsed.show_name, "Air Crash Investigations")
-        self.assertEqual(parsed.season, "03")
-        self.assertEqual(parsed.episode, "07")
-        self.assertEqual(parsed.title, "")
+    SEASON_EPISODE_TEST_CASES: Final[TestScenarios] = {
+        "sxxeyy_pattern": {
+            "filename": "Air.Crash.Investigations.S03E07.avi",
+            "is_show": True,
+            "expected": {
+                "show_name": "Air Crash Investigations",
+                "season": "03",
+                "episode": "07",
+                "title": "",
+            },
+        },
+        "x_pattern": {
+            "filename": (
+                "Air Crash Investigations  3x07 - Helicopter Down (Helicopter"
+                " G-TIGK).avi"
+            ),
+            "is_show": True,
+            "expected": {
+                "show_name": "Air Crash Investigations",
+                "season": "03",
+                "episode": "07",
+                "title": "Helicopter Down (Helicopter G-TIGK)",
+            },
+        },
+    }
 
-    def test_x_pattern(self):
-        parsed = parse_filename(
-            "Air Crash Investigations  3x07 - Helicopter Down (Helicopter G-TIGK).avi"
-        )
+    def test_season_episode_patterns(self):
+        """Test various season/episode patterns against expected values"""
+        for test_name, test_case in self.SEASON_EPISODE_TEST_CASES.items():
+            with self.subTest(pattern=test_name):
+                parsed = parse_filename(
+                    test_case["filename"], test_case.get("is_show", True)
+                )
+                expected = test_case["expected"]
 
-        self.assertEqual(parsed.show_name, "Air Crash Investigations")
-        self.assertEqual(parsed.season, "03")
-        self.assertEqual(parsed.episode, "07")
-        self.assertEqual(parsed.title, "Helicopter Down (Helicopter G-TIGK)")
+                for field, value in expected.items():
+                    self.assertEqual(
+                        getattr(parsed, field),
+                        value,
+                        f"Mismatch in {field} for {test_name}",
+                    )
 
 
 class TestParser(unittest.TestCase):
-    def test_full_pattern_1(self):
-        parsed = parse_filename("Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4")
+    """Test cases for full filename parsing patterns"""
 
-        self.assertEqual(parsed.show_name, "Better Call Saul")
-        self.assertEqual(parsed.season, "01")
-        self.assertEqual(parsed.episode, "10")
-        self.assertEqual(parsed.title, "Marco")
-        self.assertEqual(parsed.resolution, "1080p")
-        self.assertEqual(parsed.codec, "x265")
-        self.assertEqual(parsed.release_group, "RARBG")
+    FULL_PARSE_TEST_CASES: Final[TestScenarios] = {
+        "full_pattern_1": {
+            "filename": "Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4",
+            "expected": {
+                "show_name": "Better Call Saul",
+                "season": "01",
+                "episode": "10",
+                "title": "Marco",
+                "resolution": "1080p",
+                "codec": "x265",
+                "release_group": "RARBG",
+            },
+        },
+        "full_pattern_2": {
+            "filename": (
+                "Mayday.S26E10.Mixed.Measures.2160P.CRVE.WEB-DL.H265.DDP.5.1."
+                "ENG.FRA-NS225.mkv"
+            ),
+            "expected": {
+                "show_name": "Mayday",
+                "season": "26",
+                "episode": "10",
+                "title": "Mixed Measures",
+                "resolution": "2160P",
+                "source": "CRVE.WEB-DL",
+                "codec": "H265",
+                "audio_codec": "DDP.5.1",
+                "lang": "ENG.FRA",
+                "release_group": "NS225",
+            },
+        },
+        "full_pattern_3": {
+            "filename": (
+                "Mayday S03E10 Head on Collision 1080p AMZN WEB-DL DD 2 0 H"
+                " 264-playWEB.mkv"
+            ),
+            "expected": {
+                "show_name": "Mayday",
+                "season": "03",
+                "episode": "10",
+                "title": "Head on Collision",
+                "resolution": "1080p",
+                "source": "AMZN.WEB-DL",
+                "codec": "H.264",
+                "audio_codec": "DD.2.0",
+                "release_group": "playWEB",
+            },
+        },
+        "full_pattern_4": {
+            "filename": (
+                "Air.Crash.Investigation.S16E01.Deadly.Silence.(1999.South."
+                "Dakota.Learjet.35.Crash).1080p.WEB-DL.H264.DDP-HDCTV.mkv"
+            ),
+            "expected": {
+                "show_name": "Air Crash Investigation",
+                "season": "16",
+                "episode": "01",
+                "title": "Deadly Silence (1999 South Dakota Learjet 35 Crash)",
+                "resolution": "1080p",
+                "source": "WEB-DL",
+                "codec": "H264",
+                "audio_codec": "DDP",
+                "release_group": "HDCTV",
+            },
+        },
+        "full_pattern_5": {
+            "filename": (
+                "Air.Crash.Investigation.S01E03.Fire.On.Board.(Swissair.Flight."
+                "111).1080p.YTB.WEB-DL.VP9.Opus.mkv"
+            ),
+            "expected": {
+                "show_name": "Air Crash Investigation",
+                "season": "01",
+                "episode": "03",
+                "title": "Fire On Board (Swissair Flight 111)",
+                "resolution": "1080p",
+                "source": "YTB.WEB-DL",
+                "codec": "VP9",
+                "audio_codec": "Opus",
+            },
+        },
+        "full_pattern_6": {
+            "filename": (
+                "Air.Crash.Investigation.S01E03.Fire.On.Board.(Swissair.Flight."
+                "111).1080p.YTB.WEB-DL.VP9.Opus.eng.srt"
+            ),
+            "expected": {
+                "show_name": "Air Crash Investigation",
+                "season": "01",
+                "episode": "03",
+                "title": "Fire On Board (Swissair Flight 111)",
+                "resolution": "1080p",
+                "source": "YTB.WEB-DL",
+                "codec": "VP9",
+                "audio_codec": "Opus",
+                "lang": "eng",
+            },
+        },
+        "full_pattern_7": {
+            "filename": (
+                "Moon.Knight.S01E06.Gods.and.Monsters.UHD.BluRay.2160p.TrueHD."
+                "Atmos.7.1.DV.HEVC.HYBRID.REMUX-FraMeSToR.zh.chs&eng.ass"
+            ),
+            "expected": {
+                "show_name": "Moon Knight",
+                "season": "01",
+                "episode": "06",
+                "title": "Gods and Monsters",
+                "source": "UHD.BluRay",
+                "package": "REMUX",
+                "hdr": "DV.HYBRID",
+                "codec": "HEVC",
+                "audio_codec": "TrueHD.Atmos.7.1",
+                "lang": "zh.chs&eng",
+                "release_group": "FraMeSToR",
+            },
+        },
+        "branket_pattern_1": {
+            "filename": (
+                "Avengers Infinity War (2018) [Hybrid][Remux-2160p][DV HDR10][TrueHD"
+                " Atmos 7.1][HEVC]-FraMeSToR.mkv"
+            ),
+            "is_show": False,
+            "expected": {
+                "show_name": "Avengers Infinity War",
+                "season": "",
+                "episode": "",
+                "titie": "",
+                "source": "",
+                "package": "REMUX",
+                "hdr": "DV.HDR10.HYBRID",
+                "codec": "HEVC",
+                "audio_codec": "TrueHD.Atmos.7.1",
+                "release_group": "FraMeSToR",
+            },
+        },
+    }
 
-    def test_full_pattern_2(self):
-        parsed = parse_filename(
-            "Mayday.S26E10.Mixed.Measures.2160P.CRVE.WEB-DL.H265.DDP.5.1.ENG.FRA-NS225.mkv"
-        )
+    def test_full_filename_patterns(self):
+        """Test various full filename patterns against expected values"""
+        for test_name, test_case in self.FULL_PARSE_TEST_CASES.items():
+            with self.subTest(pattern=test_name):
+                parsed = parse_filename(
+                    test_case["filename"], test_case.get("is_show", True)
+                )
+                expected = test_case["expected"]
 
-        self.assertEqual(parsed.show_name, "Mayday")
-        self.assertEqual(parsed.season, "26")
-        self.assertEqual(parsed.episode, "10")
-        self.assertEqual(parsed.title, "Mixed Measures")
-        self.assertEqual(parsed.resolution, "2160P")
-        self.assertEqual(parsed.source, "CRVE.WEB-DL")
-        self.assertEqual(parsed.codec, "H265")
-        self.assertEqual(parsed.audio_codec, "DDP.5.1")
-        self.assertEqual(parsed.lang, "ENG.FRA")
-        self.assertEqual(parsed.release_group, "NS225")
-
-    def test_full_pattern_3(self):
-        parsed = parse_filename(
-            "Mayday S03E10 Head on Collision 1080p AMZN WEB-DL DD 2 0 H 264-playWEB.mkv"
-        )
-
-        self.assertEqual(parsed.show_name, "Mayday")
-        self.assertEqual(parsed.season, "03")
-        self.assertEqual(parsed.episode, "10")
-        self.assertEqual(parsed.title, "Head on Collision")
-        self.assertEqual(parsed.resolution, "1080p")
-        self.assertEqual(parsed.source, "AMZN.WEB-DL")
-        self.assertEqual(parsed.codec, "H.264")
-        self.assertEqual(parsed.audio_codec, "DD.2.0")
-        self.assertEqual(parsed.release_group, "playWEB")
-
-    def test_full_pattern_4(self):
-        parsed = parse_filename(
-            "Air.Crash.Investigation.S16E01.Deadly.Silence.(1999.South.Dakota.Learjet.35.Crash).1080p.WEB-DL.H264.DDP-HDCTV.mkv"
-        )
-
-        self.assertEqual(parsed.show_name, "Air Crash Investigation")
-        self.assertEqual(parsed.season, "16")
-        self.assertEqual(parsed.episode, "01")
-        self.assertEqual(
-            parsed.title, "Deadly Silence (1999 South Dakota Learjet 35 Crash)"
-        )
-        self.assertEqual(parsed.resolution, "1080p")
-        self.assertEqual(parsed.source, "WEB-DL")
-        self.assertEqual(parsed.codec, "H264")
-        self.assertEqual(parsed.audio_codec, "DDP")
-        self.assertEqual(parsed.release_group, "HDCTV")
-
-    def test_full_pattern_5(self):
-        parsed = parse_filename(
-            "Air.Crash.Investigation.S01E03.Fire.On.Board.(Swissair.Flight.111).1080p.YTB.WEB-DL.VP9.Opus.mkv"
-        )
-
-        self.assertEqual(parsed.show_name, "Air Crash Investigation")
-        self.assertEqual(parsed.season, "01")
-        self.assertEqual(parsed.episode, "03")
-        self.assertEqual(parsed.title, "Fire On Board (Swissair Flight 111)")
-        self.assertEqual(parsed.resolution, "1080p")
-        self.assertEqual(parsed.source, "YTB.WEB-DL")
-        self.assertEqual(parsed.codec, "VP9")
-        self.assertEqual(parsed.audio_codec, "Opus")
-
-    def test_full_pattern_6(self):
-        parsed = parse_filename(
-            "Air.Crash.Investigation.S01E03.Fire.On.Board.(Swissair.Flight.111).1080p.YTB.WEB-DL.VP9.Opus.eng.srt"
-        )
-
-        self.assertEqual(parsed.show_name, "Air Crash Investigation")
-        self.assertEqual(parsed.season, "01")
-        self.assertEqual(parsed.episode, "03")
-        self.assertEqual(parsed.title, "Fire On Board (Swissair Flight 111)")
-        self.assertEqual(parsed.resolution, "1080p")
-        self.assertEqual(parsed.source, "YTB.WEB-DL")
-        self.assertEqual(parsed.codec, "VP9")
-        self.assertEqual(parsed.audio_codec, "Opus")
-        self.assertEqual(parsed.lang, "eng")
+                for field, value in expected.items():
+                    self.assertEqual(
+                        getattr(parsed, field),
+                        value,
+                        f"Mismatch in {field} for {test_name}: expected {value}, got"
+                        f" {getattr(parsed, field)}",
+                    )

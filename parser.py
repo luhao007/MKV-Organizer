@@ -7,13 +7,14 @@ from typing import Iterable, Optional
 from config import (
     AUDIO_CODECS,
     CODECS,
-    FEATURE,
+    HDR,
     LANGUAGES,
     PACKAGE,
     RELEASE_GROUP_PATTERN,
     RESOLUTION_PATTERN,
     SEASON_EPISODE_PATTERN,
     SOURCES,
+    SUBTITLE_FORMATS,
     TITLE_METADATA_SUFFIX_PATTERN,
 )
 from models import ParsedFileInfo
@@ -169,9 +170,11 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         ValueError: If filename doesn't contain season/episode pattern.
     """
     logger.debug(f"Parsing filename: {filename}")
-    filename = filename.replace(" ", ".")
+    fn = filename.replace(" ", ".")
+    fn = fn.replace("[", "").replace("]", ".")
+    fn = fn.replace("(", "").replace(")", ".")
 
-    path = Path(filename)
+    path = Path(fn)
     stem = path.stem
     extension = path.suffix.lstrip(".").lower()
 
@@ -183,8 +186,12 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     # Remove common noise prefixes that are not part of the title
     stem = strip_noise_prefix(stem)
 
-    # Extract language tags first (at the end)
-    lang, stem = extract_through_known_lists(LANGUAGES, stem, repeated=True)
+    if extension in SUBTITLE_FORMATS:
+        # Extract language tags first (at the end)
+        lang, stem = extract_through_known_lists(LANGUAGES, stem, repeated=True)
+    else:
+        lang = ""
+
     # Then extract release group (usually at the end after a hyphen)
     release_group, stem = extract_through_pattern(RELEASE_GROUP_PATTERN, stem)
 
@@ -200,15 +207,25 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     # Extract show name (everything before SxxEyy)
     show_name = normalize_separators(show_name)
 
+    # Some show name have years
+    if show_name[-5] == " " and show_name[-4:].isdigit():
+        year = show_name[-4:]
+        show_name = show_name[:-5]
+    else:
+        year = ""
+
     # Extract resolution, codec, source, audio codec, language
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
     codec, unparsed = extract_through_known_lists(CODECS, unparsed)
     source, unparsed = extract_through_known_lists(SOURCES, unparsed)
     package, unparsed = extract_through_known_lists(PACKAGE, unparsed, repeated=True)
-    feature, unparsed = extract_through_known_lists(FEATURE, unparsed, repeated=True)
+    hdr, unparsed = extract_through_known_lists(HDR, unparsed, repeated=True)
     audio_codec, unparsed = extract_through_known_lists(
         AUDIO_CODECS, unparsed, repeated=True
     )
+
+    if extension not in SUBTITLE_FORMATS:
+        lang, unparsed = extract_through_known_lists(LANGUAGES, unparsed, repeated=True)
 
     # Extract title directly
     title = strip_trailing_metadata(unparsed)
@@ -217,7 +234,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
 
     logger.debug(
         f"Extracted: show={show_name}, title={title}, resolution={resolution},"
-        f" codec={codec}, source={source}, package={package}, feature={feature},"
+        f" codec={codec}, source={source}, package={package}, hdr={hdr},"
         f" audio_codec={audio_codec}, lang={lang}, extra={unparsed},"
         f" extension={extension}, release_group={release_group}"
     )
@@ -231,11 +248,12 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         codec=codec,
         source=source,
         package=package,
-        feature=feature,
+        hdr=hdr,
         audio_codec=audio_codec,
         lang=lang,
         extra=unparsed,
         release_group=release_group or "",
         extension=extension,
         original_filename=filename,
+        year=year,
     )

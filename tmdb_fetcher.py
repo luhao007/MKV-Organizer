@@ -341,7 +341,7 @@ def fetch_and_save_episode_names(
     organized: FileOrganization,
     folder: str,
     show_name: Optional[str] = None,
-) -> bool:
+):
     """Fetch episode names from TMDB and update FileOrganization in-place.
 
     Also saves results to EPISODE_NAME_FILE for backward compatibility.
@@ -362,7 +362,7 @@ def fetch_and_save_episode_names(
     success = fetch_episode_names_batch(organized, show_name)
     if not success:
         logger.error("No episode names found or updated from TMDB")
-        return False
+        return
 
     # Build EPISODE_NAME_FILE data from updated parsed info
     # Group by show_name and collect updated titles
@@ -387,7 +387,7 @@ def fetch_and_save_episode_names(
 
     if not show_data:
         logger.warning("No parsed episode data found to save")
-        return False
+        return
 
     # Save to EPISODE_NAME_FILE (one file per show if multiple shows exist)
     if len(show_data) == 1:
@@ -413,4 +413,4 @@ def fetch_and_save_episode_names(
                     f.write(f"{season}|{episode}|{title}\n")
             logger.info(f"Saved episode names for '{show}' to: {index_path}")
 
-    return True
+    return

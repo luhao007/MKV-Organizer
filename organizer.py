@@ -235,6 +235,7 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
         not primary.parsed.resolution
         or not primary.parsed.codec
         or not primary.parsed.audio_codec
+        or not primary.parsed.hdr
     ):
         logger.info(
             f"Extracting media info for primary video: {primary.filename} \n"
@@ -247,6 +248,7 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
             primary.parsed.resolution or primary.media.resolution
         )
         primary.parsed.codec = primary.parsed.codec or primary.media.codec
+        primary.parsed.hdr = primary.parsed.hdr or primary.media.hdr
         primary.parsed.audio_codec = (
             primary.parsed.audio_codec or primary.media.audio_codec
         )
@@ -262,6 +264,7 @@ def fill_missing_metadata(files: list[FileDefinition]) -> None:
 def build_new_filename(
     file_def: FileDefinition,
     include_language: bool = True,
+    style: int = 1,
 ) -> str:
     """
     Build new filename for a file.
@@ -272,15 +275,17 @@ def build_new_filename(
 
     # Build base filename
     base = build_filename(
+        style=style,
         show_name=parsed.show_name,
         season=parsed.season,
         episode=parsed.episode,
         title=parsed.title,
+        year=parsed.year,
         resolution=parsed.resolution,
         source=parsed.source,
         package=parsed.package,
         codec=parsed.codec,
-        feature=parsed.feature,
+        hdr=parsed.hdr,
         audio_codec=parsed.audio_codec,
         lang=parsed.lang if include_language else "",
         extra=parsed.extra,
@@ -289,6 +294,8 @@ def build_new_filename(
 
     if parsed.extension == "thumb.jpg":
         return f"{base}-thumb.jpg"
+    elif file_def.is_subtitle:
+        return f"{base}.{parsed.lang}.{parsed.extension}"
     else:
         return f"{base}.{parsed.extension}"
 
@@ -297,6 +304,7 @@ def rename_files(
     organized: FileOrganization,
     dry_run: bool = True,
     include_language: bool = True,
+    style: int = 1,
 ) -> int:
     """
     Rename all files according to standardized naming scheme.
