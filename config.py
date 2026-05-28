@@ -39,10 +39,16 @@ CODECS_RENAME_MAPPING = {
 HDR: Final = [
     "HDR",
     "HDR10",
+    "HDR10Plus",
     "10bit",
     "SDR",
     "8bit",
     "DV",
+    "DV.5",
+    "DV.7.6",
+    "DV.7.6.MEL",
+    "DV.7.6.FEL",
+    "DV.8.1",
     "DolbyVision",
     "DoVi",
     "HYBRID",  # DoVi falls back to HDR10 if DoVi not supported
@@ -70,10 +76,16 @@ SOURCES: Final = [
     "BRRip",
     "DVD",
     "DVDRip",
-] + list(map(".".join, itertools.product(_WEB_SOURCES, ["WEB-DL", "WEB.DL", "WEBRip"])))
+] + list(
+    map(
+        ".".join,
+        itertools.product(_WEB_SOURCES, ["WEB-DL", "WEB.DL", "WEBDL", "WEBRip"]),
+    )
+)
 SOURCE_RENAME_MAPPINGS: Final = {
     "WEB.DL": "WEB-DL",
     "WEBRip": "WEB-DL",
+    "WEBDL": "WEB-DL",
     "UHD.BluRay": "BluRay",
 }
 
@@ -85,6 +97,7 @@ _AUDIO_CODECS = [
     "DTS-HD.MA",
     "DTS-HD",
     "DTS",
+    "DTS-X",
     "DDP.Atmos",
     "DDP",
     "DD",
@@ -95,12 +108,31 @@ _AUDIO_CODECS = [
     "MP2",
     "Opus",
 ]
-_AUDIO_CODECS_WITH_CHANNELS = ["DD", "DDP", "DDP.Atmos", "TrueHD", "TrueHD.Atmos"]
+_AUDIO_CODECS_WITH_CHANNELS = [
+    "DD",
+    "AC3",
+    "DDP",
+    "EAC3",
+    "EAC3.Atmos",
+    "DDP.Atmos",
+    "TrueHD",
+    "TrueHD.Atmos",
+    "DTS-X",
+]
 _CHANNELS = ["2.0", "5.1", "7.1"]
 AUDIO_CODECS: Final = _AUDIO_CODECS + list(
     map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS))
 )
 
+META_FILES: Final = [
+    "backdrop.jpg",
+    "folder.jpg",
+    "landscape.jpg",
+    "logo.png",
+    "movie.nfo",
+    "tvshow.nfo",
+    "fanart.jpg",
+]
 
 # Regex Patterns
 # ============================================================================

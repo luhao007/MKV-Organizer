@@ -178,7 +178,6 @@ def build_filename(
     Returns:
         Formatted filename without extension
     """
-
     if style == 1:
         # Build parts list (skip empty parts)
         parts = [

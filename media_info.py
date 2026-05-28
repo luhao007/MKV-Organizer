@@ -265,7 +265,7 @@ def extract_audio_codec(track: Track) -> str:
         ret = "DD"
     elif "dts" in fmt or "dts" in codec:
         if "x" in commercial_name:
-            ret = "DTS:X"
+            ret = "DTS-X"
         elif "hd" in commercial_name:
             ret = "DTS-HD"
             if any(x in commercial_name for x in ["ma", "master audio"]):

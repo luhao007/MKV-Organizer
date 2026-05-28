@@ -85,5 +85,5 @@ class FileDefinition:
 
 
 # Type alias for organization structure
-# season -> episode -> extension -> FileDefinition
-FileOrganization = dict[str, dict[str, dict[str, FileDefinition]]]
+# name -> season -> episode -> extension -> FileDefinition
+FileOrganization = dict[str, dict[str, dict[str, dict[str, FileDefinition]]]]

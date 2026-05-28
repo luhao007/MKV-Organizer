@@ -217,19 +217,18 @@ def fetch_episode_names_batch(
     #   show_name -> [FileDefinition, ...]
     show_files: dict[str, list[FileDefinition]] = {}
 
-    for season_files in organized.values():
-        for episode_files in season_files.values():
-            for file_def in episode_files.values():
-                if file_def.is_subtitle:
-                    continue
+    for show_name, seasons in organized.items():
+        for season_files in seasons.values():
+            for episode_files in season_files.values():
+                for file_def in episode_files.values():
+                    if file_def.is_subtitle:
+                        continue
 
-                if override_show_name:
-                    show_name = override_show_name
-                else:
-                    show_name = file_def.parsed.show_name
-                if show_name not in show_files:
-                    show_files[show_name] = []
-                show_files[show_name].append(file_def)
+                    if override_show_name:
+                        show_name = override_show_name
+                    if show_name not in show_files:
+                        show_files[show_name] = []
+                    show_files[show_name].append(file_def)
 
     if not show_files:
         logger.warning("No video files found in organized data")
@@ -368,22 +367,21 @@ def fetch_and_save_episode_names(
     # Group by show_name and collect updated titles
     show_data: dict[str, dict[str, str]] = {}  # show_name -> {S#|E#: title}
 
-    for season_files in organized.values():
-        for episode_files in season_files.values():
-            for file_def in episode_files.values():
-                if file_def.is_subtitle:
-                    continue
+    for show, seasons in organized.items():
+        for season_files in seasons.values():
+            for episode_files in season_files.values():
+                for file_def in episode_files.values():
+                    if file_def.is_subtitle:
+                        continue
 
-                if show_name:
-                    show = show_name
-                else:
-                    show = file_def.parsed.show_name
-                if show not in show_data:
-                    show_data[show] = {}
+                    if show_name:
+                        show = show_name
+                    if show not in show_data:
+                        show_data[show] = {}
 
-                key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
-                if file_def.parsed.title and key not in show_data[show]:
-                    show_data[show][key] = file_def.parsed.title
+                    key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
+                    if file_def.parsed.title and key not in show_data[show]:
+                        show_data[show][key] = file_def.parsed.title
 
     if not show_data:
         logger.warning("No parsed episode data found to save")

@@ -208,7 +208,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     show_name = normalize_separators(show_name)
 
     # Some show name have years
-    if show_name[-5] == " " and show_name[-4:].isdigit():
+    if len(show_name) > 4 and show_name[-5] == " " and show_name[-4:].isdigit():
         year = show_name[-4:]
         show_name = show_name[:-5]
     else:

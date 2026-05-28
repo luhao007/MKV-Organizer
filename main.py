@@ -2,7 +2,7 @@
 
 import argparse
 import os
-from argparse import RawTextHelpFormatter
+from argparse import BooleanOptionalAction, RawTextHelpFormatter
 
 from config import setup_logging
 from organizer import (
@@ -111,6 +111,17 @@ def main():
             "Note: Language will always be split by '.' before extension"
         ),
     )
+    parser.add_argument(
+        "--show",
+        action=BooleanOptionalAction,
+        help="Mark the folder as containing TV shows",
+    )
+    parser.add_argument(
+        "-f",
+        "--force-use-media-info",
+        action="store_true",
+        help="Force use media info to rename files",
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -142,6 +153,7 @@ def main():
             folder,
             recursive=args.recursive,
             episode_name_index=episode_name_index,
+            is_show=args.show,
         )
 
         if not organized:
@@ -170,6 +182,7 @@ def main():
             dry_run=dry_run,
             include_language=include_language,
             style=args.style,
+            force_use_media_info=args.force_use_media_info,
         )
 
         if ren_count:
