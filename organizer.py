@@ -480,11 +480,16 @@ def fill_missing_metadata(
 
     # Fill in missing data from primary video
     for file_def in files:
+        file_def.parsed.show_name = primary.parsed.show_name
+        file_def.parsed.year = primary.parsed.year
+        file_def.parsed.title = primary.parsed.title
         file_def.parsed.resolution = primary.parsed.resolution
         file_def.parsed.source = primary.parsed.source
         file_def.parsed.codec = primary.parsed.codec
+        file_def.parsed.package = primary.parsed.package
         file_def.parsed.audio_codec = primary.parsed.audio_codec
         file_def.parsed.hdr = primary.parsed.hdr
+        file_def.parsed.release_group = primary.parsed.release_group
 
 
 def build_new_filename(
