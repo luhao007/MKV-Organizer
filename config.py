@@ -124,6 +124,9 @@ AUDIO_CODECS: Final = _AUDIO_CODECS + list(
     map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS))
 )
 
+# Default filename for stored episode title mappings.
+EPISODE_NAME_FILE: Final = "episode_names.txt"
+
 META_FILES: Final = [
     "backdrop.jpg",
     "folder.jpg",
@@ -132,6 +135,9 @@ META_FILES: Final = [
     "movie.nfo",
     "tvshow.nfo",
     "fanart.jpg",
+    "season.nfo",
+    EPISODE_NAME_FILE,
+    "poster.jpg",
 ]
 
 # Regex Patterns
@@ -164,9 +170,6 @@ STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
 TITLE_METADATA_SUFFIX_PATTERN: Final = re.compile(
     r"(?i)^(?P<title>.*?)(?:[.\s_-]*(?:\d{3,4}p|UHD|IMAX)(?:[.\s_-]*))*$"
 )
-
-# Default filename for stored episode title mappings.
-EPISODE_NAME_FILE: Final = "episode_names.txt"
 
 # Release group pattern (trailing text after last hyphen)
 # E.g., "...-RARBG", "...-DEFLATE", "...-GROUP_NAME"

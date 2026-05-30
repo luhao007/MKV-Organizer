@@ -8,12 +8,13 @@ from config import setup_logging
 from organizer import (
     check_low_resolution,
     check_missing,
+    handle_episode_names_for_folder,
+    list_files,
     load_episode_name_index,
     organize_files,
     rename_files,
     write_episode_name_index,
 )
-from tmdb_fetcher import fetch_and_save_episode_names
 from utils import get_logger
 
 
@@ -27,6 +28,13 @@ def main():
         "folder",
         nargs="?",
         help="Folder containing video files to organize",
+    )
+    parser.add_argument(
+        "-l",
+        "--list",
+        action="store_true",
+        default=False,
+        help="List all video files in the folder",
     )
     parser.add_argument(
         "-d",
@@ -61,14 +69,30 @@ def main():
     parser.add_argument(
         "-e",
         "--export-episode-names",
-        action="store_true",
-        help="Export parsed episode names to episode_names.txt in the target folder",
+        action=BooleanOptionalAction,
+        default=True,
+        help="Export parsed episode names to episode_names.txt (default: True)",
     )
     parser.add_argument(
         "-u",
         "--use-episode-names",
+        action=BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use stored episode_names.txt mappings to fill or override parsed titles"
+            " (default: True)"
+        ),
+    )
+    parser.add_argument(
+        "--fetch-if-missing",
+        action=BooleanOptionalAction,
+        default=True,
+        help="Fetch from TMDB if episode_names.txt is missing (default: True)",
+    )
+    parser.add_argument(
+        "--force-fetch",
         action="store_true",
-        help="Use stored episode_names.txt mappings to fill or override parsed titles",
+        help="Ignore existing episode_names.txt and force fetch from TMDB",
     )
     parser.add_argument(
         "--check-missing",
@@ -83,16 +107,6 @@ def main():
         type=int,
         help=(
             "Resolution threshold (e.g. 1080) to check for episodes with low resolution"
-        ),
-    )
-    parser.add_argument(
-        "--fetch-tmdb",
-        nargs="?",
-        const="__auto__",
-        metavar="SHOW_NAME",
-        help=(
-            "Fetch episode names from TMDB and save to episode_names.txt. "
-            "If SHOW_NAME is omitted, auto-detect show name from filenames"
         ),
     )
     parser.add_argument(
@@ -143,16 +157,10 @@ def main():
     logger.info(f"Scanning folder: {folder}")
 
     try:
-        # Load existing episode name mappings when requested
-        episode_name_index = None
-        if args.use_episode_names:
-            episode_name_index = load_episode_name_index(folder)
-
         # Organize files
         organized = organize_files(
             folder,
             recursive=args.recursive,
-            episode_name_index=episode_name_index,
             is_show=args.show,
         )
 
@@ -167,13 +175,21 @@ def main():
         )
         logger.info(f"Found {total_episodes} episodes with {total_files} files")
 
-        # Determine dry_run mode
-        dry_run = not args.commit
+        if args.list:
+            list_files(organized, is_show=args.show)
 
-        # Fetch episode names from TMDB if requested
-        if args.fetch_tmdb is not None:
-            show_name = args.fetch_tmdb if args.fetch_tmdb != "__auto__" else None
-            fetch_and_save_episode_names(organized, folder, show_name)
+        # Handle episode names if this is a TV show folder
+        if args.show:
+            handle_episode_names_for_folder(
+                folder,
+                organized,
+                use_episode_names=args.use_episode_names,
+                fetch_if_missing=args.fetch_if_missing,
+                force_fetch=args.force_fetch,
+            )
+
+        # Determine dry_run mode
+        dry_run = args.commit == False or args.dry_run == True
 
         # Rename files
         include_language = not args.no_language
@@ -194,9 +210,14 @@ def main():
         else:
             logger.info("All files are sorted. No files needed to be renamed")
 
-        if args.export_episode_names:
+        if args.export_episode_names and args.show:
             index_file = write_episode_name_index(folder, organized)
             logger.info(f"Exported episode names to: {index_file}")
+
+        # Load episode_name_index for check_missing
+        episode_name_index = None
+        if args.use_episode_names and args.show:
+            episode_name_index = load_episode_name_index(folder)
 
         if args.check_missing and episode_name_index is not None:
             check_missing(organized, episode_name_index)

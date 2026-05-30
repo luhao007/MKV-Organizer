@@ -101,10 +101,217 @@ def write_episode_name_index(folder: str, organized: FileOrganization) -> str:
     return str(index_path)
 
 
+def apply_episode_names_from_file(
+    folder: str,
+    organized: FileOrganization,
+) -> bool:
+    """
+    Apply episode names from episode_names.txt file to organized dict.
+
+    Only applies to episodes that don't already have titles.
+
+    Args:
+        folder: Path to the show folder containing episode_names.txt
+        organized: FileOrganization dict to update
+
+    Returns:
+        True if any episode names were applied, False otherwise.
+    """
+    index = load_episode_name_index(folder)
+    if not index or "name" not in index:
+        logger.debug(f"No episode names found in {folder}")
+        return False
+
+    applied_any = False
+    for seasons in organized.values():
+        for season_files in seasons.values():
+            for episode_files in season_files.values():
+                for file_def in episode_files.values():
+                    if file_def.is_subtitle:
+                        continue
+
+                    # Build key for lookup
+                    try:
+                        season_str = str(int(file_def.parsed.season)).zfill(2)
+                        episode_str = str(int(file_def.parsed.episode)).zfill(2)
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            "Invalid season/episode:"
+                            f" {file_def.parsed.season}/{file_def.parsed.episode}"
+                        )
+                        continue
+
+                    key = f"{season_str}|{episode_str}"
+
+                    # Apply episode name if found and not already set
+                    if key in index and file_def.parsed.title != index[key]:
+                        file_def.parsed.title = index[key]
+                        logger.debug(
+                            "Applied episode name from file: "
+                            f"S{season_str}E{episode_str} - {index[key]}"
+                        )
+                        applied_any = True
+
+    return applied_any
+
+
+def handle_episode_names(
+    folder: str,
+    organized: FileOrganization,
+    is_show: Optional[bool] = None,
+    use_episode_names: bool = True,
+    fetch_if_missing: bool = True,
+    force_fetch: bool = False,
+) -> None:
+    """
+    Handle episode names for a show folder.
+
+    Workflow:
+    1. If force_fetch=True, skip to step 4 (fetch from TMDB)
+    2. If use_episode_names=True and episode_names.txt exists, apply it
+    3. If fetch_if_missing=True and no episode names applied, fetch from TMDB
+    4. Fetch from TMDB (if force_fetch=True)
+
+    Args:
+        folder: Path to the show folder
+        organized: FileOrganization dict to update
+        is_show: Whether this is a show folder (only process if True)
+        use_episode_names: Whether to use existing episode_names.txt
+        fetch_if_missing: Whether to fetch from TMDB if no episode names found
+        force_fetch: Force fetch from TMDB, ignoring existing episode_names.txt
+    """
+    # Only process if is_show is True
+    if is_show is not None and not is_show:
+        logger.debug(f"Skipping episode names for non-show folder: {folder}")
+        return
+
+    if not organized:
+        logger.debug(f"No organized data for folder: {folder}")
+        return
+
+    # Step 1: Try to use existing episode_names.txt
+    if use_episode_names and not force_fetch:
+        applied = apply_episode_names_from_file(folder, organized)
+        if applied:
+            logger.info(f"Applied episode names from file in {folder}")
+            return
+
+    # Step 2: Fetch from TMDB if missing or force_fetch
+    if fetch_if_missing or force_fetch:
+        from tmdb import fetch_episode_names_for_show
+
+        try:
+            logger.info(f"Fetching episode names from TMDB for {folder}")
+            success = fetch_episode_names_for_show(folder, organized)
+            if success:
+                logger.info(f"Fetched and saved episode names for {folder}")
+            else:
+                logger.warning(f"Could not fetch episode names from TMDB for {folder}")
+        except Exception as e:
+            logger.error(f"Error fetching episode names: {e}")
+            if not use_episode_names:
+                # If we couldn't fetch and use_episode_names was False,
+                # try loading from file as fallback
+                logger.info("Attempting to use existing episode_names.txt as fallback")
+                apply_episode_names_from_file(folder, organized)
+
+
+def handle_episode_names_for_folder(
+    parent_folder: str,
+    organized: FileOrganization,
+    use_episode_names: bool = True,
+    fetch_if_missing: bool = True,
+    force_fetch: bool = False,
+) -> None:
+    """
+    Handle episode names for all shows in a folder.
+
+    This function finds show folders (subdirectories) and handles episode names
+    for each show separately. It's designed for folder structures like:
+    - Parent Folder
+      - Series Name A {imdb-xxxxx}
+        - Season 01
+          - S01E01.mkv
+      - Series Name B {tmdb-xxxx}
+        - Season 01
+          - S01E01.mkv
+
+    Args:
+        parent_folder: Path to the parent folder
+        organized: FileOrganization dict from organize_files
+        use_episode_names: Whether to use existing episode_names.txt
+        fetch_if_missing: Whether to fetch from TMDB if missing
+        force_fetch: Force fetch from TMDB, ignoring existing
+    """
+    # Group files by their folder path to identify show folders
+    from pathlib import Path
+
+    show_folders: dict[str, FileOrganization] = {}
+
+    # Extract the show folder for each file
+    for show_name, seasons in organized.items():
+        for season_files in seasons.values():
+            for episode_files in season_files.values():
+                for file_def in episode_files.values():
+                    # Get the show folder (parent of the season folder)
+                    file_path = Path(file_def.folder)
+
+                    # Try to find the show folder:
+                    # If the file is in "Parent/Show Folder/Season XX/file.mkv",
+                    # we want to get "Parent/Show Folder"
+                    if "season" in file_path.name.lower() or file_path.name.startswith(
+                        "Season"
+                    ):
+                        show_folder = str(file_path.parent)
+                    else:
+                        show_folder = file_def.folder
+
+                    if show_folder not in show_folders:
+                        show_folders[show_folder] = {}
+
+                    if show_name not in show_folders[show_folder]:
+                        show_folders[show_folder][show_name] = {}
+
+                    if (
+                        str(file_def.parsed.season)
+                        not in show_folders[show_folder][show_name]
+                    ):
+                        show_folders[show_folder][show_name][
+                            str(file_def.parsed.season)
+                        ] = {}
+
+                    ep_key = str(file_def.parsed.episode)
+                    if (
+                        ep_key
+                        not in show_folders[show_folder][show_name][
+                            str(file_def.parsed.season)
+                        ]
+                    ):
+                        show_folders[show_folder][show_name][
+                            str(file_def.parsed.season)
+                        ][ep_key] = {}
+
+                    ext = file_def.parsed.extension
+                    show_folders[show_folder][show_name][str(file_def.parsed.season)][
+                        ep_key
+                    ][ext] = file_def
+
+    # Handle episode names for each show folder
+    for show_folder, show_organized in show_folders.items():
+        logger.info(f"Handling episode names for show folder: {show_folder}")
+        handle_episode_names(
+            show_folder,
+            show_organized,
+            is_show=True,
+            use_episode_names=use_episode_names,
+            fetch_if_missing=fetch_if_missing,
+            force_fetch=force_fetch,
+        )
+
+
 def organize_files(
     folder: str,
     recursive: bool = False,
-    episode_name_index: Optional[dict[str, str]] = None,
     is_show: bool = True,
 ) -> FileOrganization:
     """
@@ -131,7 +338,6 @@ def organize_files(
                 suborganized = organize_files(
                     full_path,
                     recursive=True,
-                    episode_name_index=episode_name_index,
                     is_show=is_show,
                 )
                 for season, episodes in suborganized.items():
@@ -154,13 +360,6 @@ def organize_files(
             traceback.print_exc()
             skipped_count += 1
             continue
-
-        if episode_name_index:
-            if "name" in episode_name_index:
-                parsed.show_name = episode_name_index["name"]
-            key = f"{parsed.season}|{parsed.episode}"
-            if key in episode_name_index:
-                parsed.title = episode_name_index[key]
 
         # Create FileDefinition
         file_def = FileDefinition(
@@ -428,3 +627,54 @@ def check_low_resolution(
             logger.info(f"Episodes with low resolution: {low_res}")
         else:
             logger.info("No episodes with low resolution detected")
+
+
+def list_files(organized: FileOrganization, is_show: bool = True):
+    """
+    List all files in the organized structure.
+
+    Args:
+        organized: FileOrganization structure from organize_files()
+    """
+    from pandas import DataFrame
+
+    data: list[list[str]] = []
+    for show_name, seasons in organized.items():
+        for season, episodes in seasons.items():
+            for episode, episode_files in episodes.items():
+                for file_def in episode_files.values():
+                    if not file_def.is_media:
+                        continue
+                    parsed = file_def.parsed
+                    l = [show_name]
+                    if is_show:
+                        l += [season, episode, parsed.title]
+                    else:
+                        l += [parsed.year]
+                    l += [
+                        parsed.resolution,
+                        parsed.source,
+                        parsed.package,
+                        parsed.codec,
+                        parsed.hdr,
+                        parsed.audio_codec,
+                        parsed.release_group,
+                    ]
+                    data.append(l)
+
+    if is_show:
+        columns = ["Show Name", "Season", "Episode", "TItle"]
+    else:
+        columns = ["Movie Name", "Year"]
+    columns += [
+        "Resolution",
+        "Source",
+        "Package",
+        "Codec",
+        "HDR",
+        "Audio Codec",
+        "Release Group",
+    ]
+
+    df = DataFrame(data, columns=columns)
+    print(df)

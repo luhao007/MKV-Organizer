@@ -1,5 +1,7 @@
 """Fetch episode names from The Movie Database (TMDB)."""
 
+import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Final, Optional
 
@@ -302,7 +304,7 @@ def fetch_episode_names_batch(
                     ep_name = ep.get("name", "")
                     if ep_name:
                         file_def.parsed.title = ep_name
-                        logger.info(
+                        logger.debug(
                             f"Updated S{season_num:02d}E{episode_num:02d} title:"
                             f" {ep_name}"
                         )
@@ -412,3 +414,286 @@ def fetch_and_save_episode_names(
             logger.info(f"Saved episode names for '{show}' to: {index_path}")
 
     return
+
+
+# ── Show Folder Episode Names Handling ────────────────────────────────────
+def extract_id_from_folder_name(folder_path: str) -> Optional[tuple[str, str]]:
+    """
+    Extract IMDB or TMDB ID from folder name.
+
+    Looks for patterns like:
+    - "Series Name {imdb-tt1234567}"
+    - "Series Name {tmdb-123456}"
+
+    Returns:
+        Tuple of (id_type, id_value) where id_type is "imdb" or "tmdb",
+        or None if no ID found.
+    """
+    folder_name = Path(folder_path).name
+
+    # Look for {imdb-xxxxx} or {tmdb-xxxxx}
+    imdb_match = re.search(r"\{imdb-([^\}]+)\}", folder_name)
+    if imdb_match:
+        return ("imdb", imdb_match.group(1))
+
+    tmdb_match = re.search(r"\{tmdb-([^\}]+)\}", folder_name)
+    if tmdb_match:
+        return ("tmdb", tmdb_match.group(1))
+
+    return None
+
+
+def parse_tvshow_nfo(nfo_path: str) -> Optional[dict[str, str]]:
+    """
+    Parse tvshow.nfo XML file to extract IDs.
+
+    Returns:
+        Dict with 'imdb_id' and/or 'tmdb_id' keys, or None if parsing fails.
+    """
+    try:
+        tree = ET.parse(nfo_path)
+        root = tree.getroot()
+
+        result: dict[str, str] = {}
+
+        # Try to find imdb_id
+        imdb_elem = root.find("imdb_id")
+        if imdb_elem is not None and imdb_elem.text:
+            result["imdb_id"] = imdb_elem.text
+
+        # Try to find tmdbid
+        tmdb_elem = root.find("tmdbid")
+        if tmdb_elem is not None and tmdb_elem.text:
+            result["tmdb_id"] = tmdb_elem.text
+
+        if result:
+            logger.info(f"Parsed tvshow.nfo: {result}")
+            return result
+
+        return None
+    except Exception as e:
+        logger.error(f"Error parsing tvshow.nfo: {e}")
+        return None
+
+
+def _get_show_info_by_tmdb_id(
+    api_key: str, tmdb_show_id: int
+) -> Optional[dict[str, Any]]:
+    """Get show info from TMDB using direct TMDB ID."""
+    url = f"{TMDB_API_BASE}/tv/{tmdb_show_id}"
+    params = {"api_key": api_key}
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            logger.info(
+                f"Found TMDB show: {data.get('name', 'Unknown')} (id: {tmdb_show_id})"
+            )
+            return data
+    except Exception as e:
+        logger.error(f"Error fetching show info for TMDB ID {tmdb_show_id}: {e}")
+        return None
+
+
+def _get_show_info_by_imdb_id(api_key: str, imdb_id: str) -> Optional[dict[str, Any]]:
+    """Get show info from TMDB using IMDB ID."""
+    url = f"{TMDB_API_BASE}/find/{imdb_id}"
+    params = {"api_key": api_key, "external_source": "imdb_id"}
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            # Find the TV show result
+            tv_results = data.get("tv_results", [])
+            if tv_results:
+                show = tv_results[0]
+                logger.info(
+                    f"Found TMDB show via IMDB: {show.get('name', 'Unknown')} (id:"
+                    f" {show['id']})"
+                )
+                return show
+
+            logger.warning(f"No TMDB show found for IMDB ID: {imdb_id}")
+            return None
+    except Exception as e:
+        logger.error(f"Error fetching show info for IMDB ID {imdb_id}: {e}")
+        return None
+
+
+def fetch_episode_names_for_show(
+    show_folder: str,
+    organized: FileOrganization,
+) -> bool:
+    """
+    Fetch and apply episode names for a single show folder.
+
+    Handles multiple shows under the same parent folder by looking for IDs:
+    1. First checks folder name for {imdb-xxxxx} or {tmdb-xxxx}
+    2. Then checks tvshow.nfo file
+    3. Finally uses show name from organized dict
+
+    Args:
+        show_folder: Path to the show folder
+        organized: FileOrganization dict for this show folder
+
+    Returns:
+        True if episode names were fetched and updated, False otherwise.
+    """
+    if not organized:
+        return False
+
+    try:
+        api_key = _get_api_key()
+    except Exception as e:
+        logger.error(f"Cannot fetch episode names: {e}")
+        return False
+
+    # Get show name from organized dict
+    show_names = list(organized.keys())
+    if not show_names:
+        logger.warning("No shows found in organized data")
+        return False
+
+    show_name = show_names[0]
+    logger.info(f"Fetching episodes for show: {show_name}")
+
+    # ── Step 1: Try to get TMDB ID from folder name or tvshow.nfo ────
+    tmdb_show_id = None
+    year = ""
+
+    # Check folder name first
+    id_info = extract_id_from_folder_name(show_folder)
+    if id_info:
+        id_type, id_value = id_info
+        logger.info(f"Found {id_type} ID in folder name: {id_value}")
+
+        if id_type == "tmdb":
+            try:
+                tmdb_show_id = int(id_value)
+            except ValueError:
+                logger.warning(f"Invalid TMDB ID format: {id_value}")
+        elif id_type == "imdb":
+            # Convert IMDB ID to TMDB ID
+            show_info = _get_show_info_by_imdb_id(api_key, id_value)
+            if show_info:
+                tmdb_show_id = int(show_info["id"])
+                year = str(show_info.get("first_air_date", ""))[:4]
+
+    # Check tvshow.nfo if no ID found yet
+    if not tmdb_show_id:
+        nfo_path = Path(show_folder) / "tvshow.nfo"
+        if nfo_path.exists():
+            nfo_data = parse_tvshow_nfo(str(nfo_path))
+            if nfo_data:
+                if "tmdb_id" in nfo_data:
+                    try:
+                        tmdb_show_id = int(nfo_data["tmdb_id"])
+                    except ValueError:
+                        logger.warning(f"Invalid TMDB ID in nfo: {nfo_data['tmdb_id']}")
+                elif "imdb_id" in nfo_data:
+                    # Convert IMDB ID to TMDB ID
+                    show_info = _get_show_info_by_imdb_id(api_key, nfo_data["imdb_id"])
+                    if show_info:
+                        tmdb_show_id = int(show_info["id"])
+                        year = str(show_info.get("first_air_date", ""))[:4]
+
+    # ── Step 2: If still no ID, search by show name ────────────────────
+    if not tmdb_show_id:
+        logger.info(
+            f"No ID found in folder or nfo, searching by show name: {show_name}"
+        )
+        show_info = _search_show(api_key, show_name)
+        if show_info:
+            tmdb_show_id = int(show_info["id"])
+            year = str(show_info.get("first_air_date", ""))[:4]
+        else:
+            logger.error(f"Could not find TMDB show for: {show_name}")
+            return False
+
+    # ── Step 3: Get show info if not already obtained ────────────────
+    if not year:
+        show_info = _get_show_info_by_tmdb_id(api_key, tmdb_show_id)
+        if show_info:
+            year = str(show_info.get("first_air_date", ""))[:4]
+
+    # ── Step 4: Fetch all needed seasons and update organized dict ────
+    # Collect unique season numbers needed
+    needed_seasons: set[int] = set()
+    for season_files in organized[show_name].values():
+        for episode_files in season_files.values():
+            for file_def in episode_files.values():
+                if not file_def.is_subtitle:
+                    try:
+                        needed_seasons.add(int(file_def.parsed.season))
+                    except ValueError:
+                        pass
+
+    # Fetch all seasons
+    seasons_cache = _fetch_seasons_for_episodes(api_key, tmdb_show_id, needed_seasons)
+
+    # Update organized dict with fetched episode names
+    updated_any = False
+    for season_files in organized[show_name].values():
+        for episode_files in season_files.values():
+            for file_def in episode_files.values():
+                if file_def.is_subtitle:
+                    continue
+
+                try:
+                    season_num = int(file_def.parsed.season)
+                    episode_num = int(file_def.parsed.episode)
+                except ValueError:
+                    continue
+
+                episodes_for_season = seasons_cache.get(season_num)
+                if not episodes_for_season:
+                    continue
+
+                # Find matching episode
+                for ep in episodes_for_season:
+                    if int(ep.get("episode_number", 0)) == episode_num:
+                        ep_name = ep.get("name", "")
+                        if ep_name:
+                            file_def.parsed.title = ep_name
+                            file_def.parsed.tmdb_id = tmdb_show_id
+                            if year:
+                                file_def.parsed.year = year
+                            logger.debug(
+                                f"Updated S{season_num:02d}E{episode_num:02d} title:"
+                                f" {ep_name}"
+                            )
+                            updated_any = True
+                        break
+
+    # ── Step 5: Save episode_names.txt ────────────────────────────────
+    if updated_any:
+        index_path = Path(show_folder) / EPISODE_NAME_FILE
+        try:
+            with index_path.open("w", encoding="utf-8") as f:
+                f.write(show_name + "\n")
+
+                # Collect all episode titles
+                episodes_map: dict[str, str] = {}
+                for season_files in organized[show_name].values():
+                    for episode_files in season_files.values():
+                        for file_def in episode_files.values():
+                            if not file_def.is_subtitle and file_def.parsed.title:
+                                key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
+                                if key not in episodes_map:
+                                    episodes_map[key] = file_def.parsed.title
+
+                # Write sorted episode list
+                for key in sorted(episodes_map.keys()):
+                    season, episode = key.split("|")
+                    f.write(f"{season}|{episode}|{episodes_map[key]}\n")
+
+            logger.info(f"Saved episode names to: {index_path}")
+        except Exception as e:
+            logger.error(f"Error saving episode_names.txt: {e}")
+
+    return updated_any
