@@ -37,6 +37,12 @@ def main():
         help="List all video files in the folder",
     )
     parser.add_argument(
+        "--list-csv",
+        action="store_true",
+        default=False,
+        help="List all video files in the folder in CSV format",
+    )
+    parser.add_argument(
         "-d",
         "--dry-run",
         action="store_true",
@@ -180,7 +186,9 @@ def main():
         logger.info(f"Found {total_episodes} episodes with {total_files} files")
 
         if args.list:
-            list_files(organized, is_show=args.show)
+            list_files(organized, is_show=args.show, to_csv=False)
+        if args.list_csv:
+            list_files(organized, is_show=args.show, to_csv=True)
 
         # Handle episode names if this is a TV show folder
         fetched_folders: set[str] = set()

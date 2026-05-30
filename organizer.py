@@ -653,15 +653,13 @@ def check_low_resolution(
             logger.info("No episodes with low resolution detected")
 
 
-def list_files(organized: FileOrganization, is_show: bool = True):
+def list_files(organized: FileOrganization, is_show: bool = True, to_csv: bool = False):
     """
     List all files in the organized structure.
 
     Args:
         organized: FileOrganization structure from organize_files()
     """
-    from pandas import DataFrame
-
     data: list[list[str]] = []
     for show_name, show_data in organized.items():
         seasons = show_data["seasons"]
@@ -701,5 +699,17 @@ def list_files(organized: FileOrganization, is_show: bool = True):
         "Release Group",
     ]
 
-    df = DataFrame(data, columns=columns)
-    print(df)
+    if to_csv:
+        import csv
+
+        with open("videos.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            writer.writerows(data)
+        logger.info("'videos.csv' file created")
+
+    else:
+        from pandas import DataFrame
+
+        df = DataFrame(data, columns=columns)
+        print(df)
