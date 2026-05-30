@@ -178,6 +178,25 @@ class TestParser(unittest.TestCase):
                 "release_group": "FraMeSToR",
             },
         },
+        "dot_pattern": {
+            "filename": (
+                "Loki - S01.E04 - The Nexus Event 2160p UHD BDRip DV HDR10 x265 TrueHD"
+                " Atmos 7.1 Kira [SEV].mkv"
+            ),
+            "is_show": True,
+            "expected": {
+                "show_name": "Loki",
+                "season": "01",
+                "episode": "04",
+                "title": "The Nexus Event",
+                "resolution": "2160p",
+                "source": "UHD.BDRip",
+                "package": "REMUX",
+                "hdr": "HYBRID.DV.HDR10",
+                "codec": "x265",
+                "audio_codec": "TrueHD.Atmos.7.1",
+            },
+        },
         "branket_pattern_1": {
             "filename": (
                 "Avengers Infinity War (2018) [Hybrid][Remux-2160p][DV HDR10][TrueHD"
@@ -188,10 +207,11 @@ class TestParser(unittest.TestCase):
                 "show_name": "Avengers Infinity War",
                 "season": "",
                 "episode": "",
-                "titie": "",
+                "title": "",
                 "source": "",
-                "package": "REMUX",
-                "hdr": "DV.HDR10.HYBRID",
+                "year": "2018",
+                "package": "Remux",
+                "hdr": "Hybrid.DV.HDR10",
                 "codec": "HEVC",
                 "audio_codec": "TrueHD.Atmos.7.1",
                 "release_group": "FraMeSToR",
@@ -213,5 +233,6 @@ class TestParser(unittest.TestCase):
                         getattr(parsed, field),
                         value,
                         f"Mismatch in {field} for {test_name}: expected {value}, got"
-                        f" {getattr(parsed, field)}",
+                        f" {getattr(parsed, field)}\nFilename: {test_case['filename']}"
+                        f"\nParsed: {parsed}",
                     )

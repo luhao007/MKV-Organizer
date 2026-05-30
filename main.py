@@ -8,7 +8,7 @@ from config import setup_logging
 from organizer import (
     check_low_resolution,
     check_missing,
-    handle_episode_names_for_folder,
+    handle_episode_names,
     list_files,
     load_episode_name_index,
     organize_files,
@@ -169,27 +169,38 @@ def main():
             return 0
 
         # Log statistics
-        total_episodes = sum(len(eps) for eps in organized.values())
-        total_files = sum(
-            len(files) for eps in organized.values() for files in eps.values()
-        )
+        total_episodes = 0
+        total_files = 0
+        for show_data in organized.values():
+            seasons = show_data["seasons"]
+            for episodes in seasons.values():
+                total_episodes += len(episodes)
+                for episode_files in episodes.values():
+                    total_files += len(episode_files)
         logger.info(f"Found {total_episodes} episodes with {total_files} files")
 
         if args.list:
             list_files(organized, is_show=args.show)
 
         # Handle episode names if this is a TV show folder
+        fetched_folders: set[str] = set()
         if args.show:
-            handle_episode_names_for_folder(
+            fetched_folders = handle_episode_names(
                 folder,
                 organized,
+                is_show=args.show,
                 use_episode_names=args.use_episode_names,
                 fetch_if_missing=args.fetch_if_missing,
                 force_fetch=args.force_fetch,
             )
 
         # Determine dry_run mode
-        dry_run = args.commit == False or args.dry_run == True
+        if args.commit == True:
+            dry_run = False
+        elif args.commit == False:
+            dry_run = True
+        else:
+            dry_run = args.dry_run
 
         # Rename files
         include_language = not args.no_language
@@ -211,16 +222,21 @@ def main():
             logger.info("All files are sorted. No files needed to be renamed")
 
         if args.export_episode_names and args.show:
-            index_file = write_episode_name_index(folder, organized)
-            logger.info(f"Exported episode names to: {index_file}")
+            index_files = write_episode_name_index(
+                folder, organized, skip_folders=fetched_folders
+            )
+            if index_files:
+                for index_file in index_files:
+                    logger.info(f"Exported episode names to: {index_file}")
 
-        # Load episode_name_index for check_missing
-        episode_name_index = None
-        if args.use_episode_names and args.show:
-            episode_name_index = load_episode_name_index(folder)
-
-        if args.check_missing and episode_name_index is not None:
-            check_missing(organized, episode_name_index)
+        if args.check_missing and args.show:
+            # Load episode_name_index for check_missing from each show folder
+            for show_data in organized.values():
+                if "folder" in show_data:
+                    show_folder = show_data["folder"]
+                    episode_name_index = load_episode_name_index(show_folder)
+                    if episode_name_index and "name" in episode_name_index:
+                        check_missing(organized, episode_name_index)
 
         if args.check_low_resolution:
             check_low_resolution(

@@ -112,6 +112,7 @@ _AUDIO_CODECS_WITH_CHANNELS = [
     "DD",
     "AC3",
     "DDP",
+    "DDPA",
     "EAC3",
     "EAC3.Atmos",
     "DDP.Atmos",
@@ -120,8 +121,10 @@ _AUDIO_CODECS_WITH_CHANNELS = [
     "DTS-X",
 ]
 _CHANNELS = ["2.0", "5.1", "7.1"]
-AUDIO_CODECS: Final = _AUDIO_CODECS + list(
-    map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS))
+AUDIO_CODECS: Final = (
+    _AUDIO_CODECS
+    + list(map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
+    + list(map("".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
 )
 
 # Default filename for stored episode title mappings.
@@ -147,8 +150,8 @@ META_FILES: Final = [
 # Supports both: S01E10 and 3x07
 # Works with dots, spaces, underscores, hyphens as separators.
 SEASON_EPISODE_PATTERN: Final = re.compile(
-    r"(?i)(?:^|[.\s_-])(?:"
-    r"s(?P<season_s>\d{1,2})e(?P<episode_s>\d{2,3})|"
+    r"(?i)(?:^|[.\s_-])*(?:"
+    r"s(?P<season_s>\d{1,2})\.?e(?P<episode_s>\d{2,3})|"
     r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,3})"
     r")(?:$|[.\s_-])"
 )

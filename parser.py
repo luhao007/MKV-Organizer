@@ -34,7 +34,7 @@ def normalize_separators(text: str) -> str:
     text = text.replace(".", " ").replace("_", " ")
     # Collapse multiple spaces
     text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return text.strip("- (")
 
 
 def strip_noise_prefix(stem: str) -> str:
@@ -94,7 +94,7 @@ def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     return season.zfill(2), episode.zfill(2), left, right
 
 
-def extract_movie_name(text: str) -> tuple[str, str]:
+def extract_movie_name(text: str) -> tuple[tuple[str, str], str]:
     """
     Extract movie name and year.
 
@@ -102,13 +102,15 @@ def extract_movie_name(text: str) -> tuple[str, str]:
     """
     # The assumption is that all the filename is starting with $MOVIE_NAME.$YEAR.$EXTRA
     # Search the year pattern
-    match = re.search(r"(?i)(?<!\d)(19\d{2}|20\d{2})(?!\d)", text)
+    match = re.search(
+        r"(?i)(?<!\d)[\.\(]*(19\d{2}|20\d{2})[\.\)]*(?!\d)", text, flags=re.IGNORECASE
+    )
     if match:
         year = match.group(1)
         left = text[: match.start()]
         right = text[match.end() :]
-        return f"{left.strip(" ._-")}.{year}", right
-    return text, ""
+        return (left.strip(" ._-"), year), right
+    return (text, ""), ""
 
 
 def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, str]:
@@ -136,10 +138,13 @@ def extract_through_known_lists(
         return extracted, remaining
 
     # For repeated patterns, we need to find all occurrences
+    extraced_set: list[str] = [extracted]
     extraced_new, remaining = extract_through_pattern(pattern, remaining)
     while extraced_new:
-        extracted = ".".join([extracted, extraced_new])
+        if extraced_new not in extraced_set:
+            extraced_set.append(extraced_new)
         extraced_new, remaining = extract_through_pattern(pattern, remaining)
+    extracted = ".".join(extraced_set)
 
     return extracted, remaining
 
@@ -171,8 +176,8 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     """
     logger.debug(f"Parsing filename: {filename}")
     fn = filename.replace(" ", ".")
-    fn = fn.replace("[", "").replace("]", ".")
-    fn = fn.replace("(", "").replace(")", ".")
+    fn = fn.replace("[", "").replace("]-", "-").replace("]", ".")
+    fn = fn.replace("..", ".")
 
     path = Path(fn)
     stem = path.stem
@@ -199,20 +204,14 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         # Extract season and episode
         season, episode, show_name, unparsed = extract_season_episode(stem)
         logger.debug(f"Found season: {season}, episode: {episode}")
+        year = ""
     else:
         # Grab the year of a movie
         season, episode = "", ""
-        show_name, unparsed = extract_movie_name(stem)
+        (show_name, year), unparsed = extract_movie_name(stem)
 
     # Extract show name (everything before SxxEyy)
     show_name = normalize_separators(show_name)
-
-    # Some show name have years
-    if len(show_name) > 4 and show_name[-5] == " " and show_name[-4:].isdigit():
-        year = show_name[-4:]
-        show_name = show_name[:-5]
-    else:
-        year = ""
 
     # Extract resolution, codec, source, audio codec, language
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)

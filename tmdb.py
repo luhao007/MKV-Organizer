@@ -219,7 +219,8 @@ def fetch_episode_names_batch(
     #   show_name -> [FileDefinition, ...]
     show_files: dict[str, list[FileDefinition]] = {}
 
-    for show_name, seasons in organized.items():
+    for show_name, show_data in organized.items():
+        seasons = show_data["seasons"]
         for season_files in seasons.values():
             for episode_files in season_files.values():
                 for file_def in episode_files.values():
@@ -369,10 +370,11 @@ def fetch_and_save_episode_names(
     # Group by show_name and collect updated titles
     show_data: dict[str, dict[str, str]] = {}  # show_name -> {S#|E#: title}
 
-    for show, seasons in organized.items():
-        for season_files in seasons.values():
-            for episode_files in season_files.values():
-                for file_def in episode_files.values():
+    for show, data in organized.items():
+        seasons = data["seasons"]
+        for season, episodes in seasons.items():
+            for episode, files in episodes.items():
+                for file_def in files.values():
                     if file_def.is_subtitle:
                         continue
 
@@ -583,6 +585,11 @@ def fetch_episode_names_for_show(
             if show_info:
                 tmdb_show_id = int(show_info["id"])
                 year = str(show_info.get("first_air_date", ""))[:4]
+                fetched_show_name = show_info.get("name", show_name)
+                if fetched_show_name != show_name:
+                    logger.info(f"Need to update show name to {fetched_show_name}")
+                    organized[fetched_show_name] = organized.pop(show_name)
+                    show_name = fetched_show_name
 
     # Check tvshow.nfo if no ID found yet
     if not tmdb_show_id:
@@ -624,7 +631,7 @@ def fetch_episode_names_for_show(
     # ── Step 4: Fetch all needed seasons and update organized dict ────
     # Collect unique season numbers needed
     needed_seasons: set[int] = set()
-    for season_files in organized[show_name].values():
+    for season_files in organized[show_name]["seasons"].values():
         for episode_files in season_files.values():
             for file_def in episode_files.values():
                 if not file_def.is_subtitle:
@@ -638,7 +645,7 @@ def fetch_episode_names_for_show(
 
     # Update organized dict with fetched episode names
     updated_any = False
-    for season_files in organized[show_name].values():
+    for season_files in organized[show_name]["seasons"].values():
         for episode_files in season_files.values():
             for file_def in episode_files.values():
                 if file_def.is_subtitle:
@@ -670,6 +677,9 @@ def fetch_episode_names_for_show(
                             updated_any = True
                         break
 
+                if file_def.parsed.show_name != show_name:
+                    file_def.parsed.show_name = show_name
+
     # ── Step 5: Save episode_names.txt ────────────────────────────────
     if updated_any:
         index_path = Path(show_folder) / EPISODE_NAME_FILE
@@ -679,7 +689,7 @@ def fetch_episode_names_for_show(
 
                 # Collect all episode titles
                 episodes_map: dict[str, str] = {}
-                for season_files in organized[show_name].values():
+                for season_files in organized[show_name]["seasons"].values():
                     for episode_files in season_files.values():
                         for file_def in episode_files.values():
                             if not file_def.is_subtitle and file_def.parsed.title:

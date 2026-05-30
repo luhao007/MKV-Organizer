@@ -91,7 +91,9 @@ def format_title(title: str, style: int = 1) -> str:
         return ""
 
     # Remove characters that are not be able to be used in filenames
-    title = title.replace(",", "").replace("?", "").replace("!", "")
+    illegal_chars = ",?!\\/"
+    for char in illegal_chars:
+        title = title.replace(char, "")
 
     # Split on separators while preserving the structure
     tokens = [t for t in WORD_SPLIT_PATTERN.split(title) if t]
@@ -129,12 +131,15 @@ def format_known(
         if alias.lower() in value.lower():
             value = re.sub(alias, standard, value, flags=re.IGNORECASE)
 
-    if style != 1:
+    if style == 1:
+        value = value.replace(" ", ".")
+    elif style == 2:
         # Use space as separator
         value = value.replace(".", " ")
         # Handle audio channel
         channels = ["2.0", "5.1", "7.1"]
-        for channel in channels:
+        dv_profils = ["7.6", "8.1", "8.4"]
+        for channel in channels + dv_profils:
             value = value.replace(channel.replace(".", " "), channel)
     return value
 
@@ -178,48 +183,46 @@ def build_filename(
     Returns:
         Formatted filename without extension
     """
+    metas = [
+        format_resolution(resolution),
+        format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=style),
+        format_known(package, PACKAGE, style=style),
+        format_known(codec, CODECS, style=style),
+        format_known(hdr, HDR, HDR_RENAME_MAPPING, style=style),
+        format_known(audio_codec, AUDIO_CODECS, style=style),
+        format_known(lang, LANGUAGES, style=style),
+        extra,
+    ]
+    metas = [p for p in metas if p]
+
     if style == 1:
-        # Build parts list (skip empty parts)
-        parts = [
-            format_title(show_name, 1),
-            year,
-            f"S{season}E{episode}" if season and episode else "",
-            format_title(title, 1),
-            format_resolution(resolution),
-            format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=1),
-            format_known(package, PACKAGE, style=1),
-            format_known(codec, CODECS, style=1),
-            format_known(hdr, HDR, HDR_RENAME_MAPPING, style=1),
-            format_known(audio_codec, AUDIO_CODECS, style=1),
-            format_known(lang, LANGUAGES, style=1),
-            extra,
-        ]
-        parts = [p for p in parts if p]
+        parts = [format_title(show_name, style)]
+        if season and episode:
+            # show
+            parts.append(f"S{season}E{episode}")
+            if title:
+                parts.append(format_title(title, style))
+        else:
+            # movie
+            parts.append(year)
+            # Build parts list (skip empty parts)
 
         # Join with dots
-        filename = ".".join(parts)
+        filename = ".".join(parts + metas)
     elif style == 2:
         filename = format_title(show_name, 2)
-        if year:
-            filename += f" ({year})"
         if season and episode:
+            # show
             filename += f" S{season}E{episode}"
-        if title:
-            filename += f" - {format_title(title, 2)}"
+            if title:
+                filename += f" - {format_title(title, 2)}"
+        else:
+            # movie
+            if year:
+                filename += f" ({year})"
 
-        parts = [
-            format_resolution(resolution),
-            format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=2),
-            format_known(package, PACKAGE, style=2),
-            format_known(codec, CODECS, style=2),
-            format_known(hdr, HDR, HDR_RENAME_MAPPING, style=2),
-            format_known(audio_codec, AUDIO_CODECS, style=2),
-            format_known(lang, LANGUAGES, style=2),
-            extra,
-        ]
-        parts = [p for p in parts if p]
-        if parts:
-            filename += f" {''.join(f'[{part}]' for part in parts)}"
+        if metas:
+            filename += f" {''.join(f'[{part}]' for part in metas)}"
     else:
         raise ValueError("Unknown style")
 

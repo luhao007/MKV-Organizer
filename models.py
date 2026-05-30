@@ -1,7 +1,7 @@
 """Data models for video file information and metadata."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, TypedDict
 
 
 @dataclass
@@ -85,5 +85,10 @@ class FileDefinition:
 
 
 # Type alias for organization structure
-# name -> season -> episode -> extension -> FileDefinition
-FileOrganization = dict[str, dict[str, dict[str, dict[str, FileDefinition]]]]
+# show_name -> {'folder': show_folder_path, 'seasons': {season -> episode -> ext -> FileDefinition}}
+class ShowData(TypedDict):
+    folder: str
+    seasons: dict[str, dict[str, dict[str, FileDefinition]]]
+
+
+FileOrganization = dict[str, ShowData]

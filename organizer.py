@@ -70,11 +70,42 @@ def load_episode_name_index(folder: str) -> dict[str, str]:
     return index
 
 
-def write_episode_name_index(folder: str, organized: FileOrganization) -> str:
-    index_path = Path(folder) / EPISODE_NAME_FILE
-    mappings: dict[str, str] = {}
+def write_episode_name_index(
+    folder: str,
+    organized: FileOrganization,
+    skip_folders: Optional[set[str]] = None,
+) -> list[str]:
+    """
+    Write episode_names.txt files for each show folder.
 
-    for show_name, seasons in organized.items():
+    Args:
+        folder: Parent folder (for compatibility, not used directly)
+        organized: FileOrganization dict with show data
+        skip_folders: Set of show folders to skip (already written by fetch)
+
+    Returns:
+        List of paths where episode_names.txt was written
+    """
+    if skip_folders is None:
+        skip_folders = set()
+
+    written_files: list[str] = []
+
+    for show_name, show_data in organized.items():
+        if "seasons" not in show_data:
+            continue
+
+        show_folder = show_data.get("folder", folder)
+        seasons = show_data["seasons"]
+
+        # Skip if already written by fetch
+        if show_folder in skip_folders:
+            logger.debug(f"Skipping {show_folder} - already written by fetch")
+            continue
+
+        mappings: dict[str, str] = {}
+        mappings["name"] = show_name
+
         for season, episodes in seasons.items():
             for episode, episode_files in episodes.items():
                 try:
@@ -88,17 +119,30 @@ def write_episode_name_index(folder: str, organized: FileOrganization) -> str:
 
                 key = f"{parsed.season}|{parsed.episode}"
                 mappings[key] = parsed.title
-                if not show_name:
-                    show_name = parsed.show_name
 
-        with index_path.open("w", encoding="utf-8") as file:
-            file.write(show_name)
-            file.write("\n")
-            for key in sorted(mappings):
-                season, episode = key.split("|", 2)
-                file.write(f"{season}|{episode}|{mappings[key]}\n")
+        if not mappings:
+            logger.debug(f"No episode names to write for {show_name}")
+            continue
 
-    return str(index_path)
+        index_path = Path(show_folder) / EPISODE_NAME_FILE
+        if index_path.exists():
+            index = load_episode_name_index(show_folder)
+            if index == mappings:
+                continue
+        try:
+            with index_path.open("w", encoding="utf-8") as file:
+                file.write(show_name)
+                file.write("\n")
+                for key in sorted(mappings):
+                    season, episode = key.split("|", 2)
+                    file.write(f"{season}|{episode}|{mappings[key]}\n")
+
+            logger.info(f"Exported episode names to: {index_path}")
+            written_files.append(str(index_path))
+        except Exception as e:
+            logger.error(f"Error writing episode_names.txt to {show_folder}: {e}")
+
+    return written_files
 
 
 def apply_episode_names_from_file(
@@ -123,7 +167,11 @@ def apply_episode_names_from_file(
         return False
 
     applied_any = False
-    for seasons in organized.values():
+    for show_data in organized.values():
+        if "seasons" not in show_data:
+            continue
+
+        seasons = show_data["seasons"]
         for season_files in seasons.values():
             for episode_files in season_files.values():
                 for file_def in episode_files.values():
@@ -162,9 +210,9 @@ def handle_episode_names(
     use_episode_names: bool = True,
     fetch_if_missing: bool = True,
     force_fetch: bool = False,
-) -> None:
+) -> set[str]:
     """
-    Handle episode names for a show folder.
+    Handle episode names for all shows in the organized dict.
 
     Workflow:
     1. If force_fetch=True, skip to step 4 (fetch from TMDB)
@@ -173,140 +221,76 @@ def handle_episode_names(
     4. Fetch from TMDB (if force_fetch=True)
 
     Args:
-        folder: Path to the show folder
-        organized: FileOrganization dict to update
+        folder: Path to the parent folder
+        organized: FileOrganization dict with show folders and seasons
         is_show: Whether this is a show folder (only process if True)
         use_episode_names: Whether to use existing episode_names.txt
         fetch_if_missing: Whether to fetch from TMDB if no episode names found
         force_fetch: Force fetch from TMDB, ignoring existing episode_names.txt
+
+    Returns:
+        Set of show folders that had episode_names.txt written by fetch
     """
     # Only process if is_show is True
     if is_show is not None and not is_show:
-        logger.debug(f"Skipping episode names for non-show folder: {folder}")
-        return
+        logger.debug(f"Skipping episode names for non-show folder")
+        return set()
 
     if not organized:
-        logger.debug(f"No organized data for folder: {folder}")
-        return
+        logger.debug(f"No organized data")
+        return set()
 
-    # Step 1: Try to use existing episode_names.txt
-    if use_episode_names and not force_fetch:
-        applied = apply_episode_names_from_file(folder, organized)
-        if applied:
-            logger.info(f"Applied episode names from file in {folder}")
-            return
+    fetched_folders: set[str] = set()
 
-    # Step 2: Fetch from TMDB if missing or force_fetch
-    if fetch_if_missing or force_fetch:
-        from tmdb import fetch_episode_names_for_show
+    # Process each show
+    for show_name, show_data in organized.items():
+        if "seasons" not in show_data:
+            continue
 
-        try:
-            logger.info(f"Fetching episode names from TMDB for {folder}")
-            success = fetch_episode_names_for_show(folder, organized)
-            if success:
-                logger.info(f"Fetched and saved episode names for {folder}")
+        show_folder = show_data.get("folder", folder)
+
+        need_fetch = False
+        # Step 1: Try to use existing episode_names.txt
+        if use_episode_names and not force_fetch:
+            # Create a temporary organized dict for just this show
+            temp_organized = {show_name: show_data}
+            index = load_episode_name_index(show_folder)
+            if not index:
+                need_fetch = fetch_if_missing
             else:
-                logger.warning(f"Could not fetch episode names from TMDB for {folder}")
-        except Exception as e:
-            logger.error(f"Error fetching episode names: {e}")
-            if not use_episode_names:
-                # If we couldn't fetch and use_episode_names was False,
-                # try loading from file as fallback
-                logger.info("Attempting to use existing episode_names.txt as fallback")
-                apply_episode_names_from_file(folder, organized)
+                applied = apply_episode_names_from_file(show_folder, temp_organized)
+                if applied:
+                    logger.info(f"Applied episode names from file in {show_folder}")
+                    continue
 
+        # Step 2: Fetch from TMDB if missing or force_fetch
+        if force_fetch or need_fetch:
+            from tmdb import fetch_episode_names_for_show
 
-def handle_episode_names_for_folder(
-    parent_folder: str,
-    organized: FileOrganization,
-    use_episode_names: bool = True,
-    fetch_if_missing: bool = True,
-    force_fetch: bool = False,
-) -> None:
-    """
-    Handle episode names for all shows in a folder.
+            try:
+                logger.info(f"Fetching episode names from TMDB for {show_folder}")
+                temp_organized = {show_name: show_data}
+                success = fetch_episode_names_for_show(show_folder, temp_organized)
+                if success:
+                    logger.info(f"Fetched and saved episode names for {show_folder}")
+                    fetched_folders.add(show_folder)
+                else:
+                    logger.warning(
+                        f"Could not fetch episode names from TMDB for {show_folder}"
+                    )
+            except Exception as e:
+                logger.error(f"Error fetching episode names: {e}")
+                traceback.print_exc()
+                if not use_episode_names:
+                    # If we couldn't fetch and use_episode_names was False,
+                    # try loading from file as fallback
+                    logger.info(
+                        "Attempting to use existing episode_names.txt as fallback"
+                    )
+                    temp_organized = {show_name: show_data}
+                    apply_episode_names_from_file(show_folder, temp_organized)
 
-    This function finds show folders (subdirectories) and handles episode names
-    for each show separately. It's designed for folder structures like:
-    - Parent Folder
-      - Series Name A {imdb-xxxxx}
-        - Season 01
-          - S01E01.mkv
-      - Series Name B {tmdb-xxxx}
-        - Season 01
-          - S01E01.mkv
-
-    Args:
-        parent_folder: Path to the parent folder
-        organized: FileOrganization dict from organize_files
-        use_episode_names: Whether to use existing episode_names.txt
-        fetch_if_missing: Whether to fetch from TMDB if missing
-        force_fetch: Force fetch from TMDB, ignoring existing
-    """
-    # Group files by their folder path to identify show folders
-    from pathlib import Path
-
-    show_folders: dict[str, FileOrganization] = {}
-
-    # Extract the show folder for each file
-    for show_name, seasons in organized.items():
-        for season_files in seasons.values():
-            for episode_files in season_files.values():
-                for file_def in episode_files.values():
-                    # Get the show folder (parent of the season folder)
-                    file_path = Path(file_def.folder)
-
-                    # Try to find the show folder:
-                    # If the file is in "Parent/Show Folder/Season XX/file.mkv",
-                    # we want to get "Parent/Show Folder"
-                    if "season" in file_path.name.lower() or file_path.name.startswith(
-                        "Season"
-                    ):
-                        show_folder = str(file_path.parent)
-                    else:
-                        show_folder = file_def.folder
-
-                    if show_folder not in show_folders:
-                        show_folders[show_folder] = {}
-
-                    if show_name not in show_folders[show_folder]:
-                        show_folders[show_folder][show_name] = {}
-
-                    if (
-                        str(file_def.parsed.season)
-                        not in show_folders[show_folder][show_name]
-                    ):
-                        show_folders[show_folder][show_name][
-                            str(file_def.parsed.season)
-                        ] = {}
-
-                    ep_key = str(file_def.parsed.episode)
-                    if (
-                        ep_key
-                        not in show_folders[show_folder][show_name][
-                            str(file_def.parsed.season)
-                        ]
-                    ):
-                        show_folders[show_folder][show_name][
-                            str(file_def.parsed.season)
-                        ][ep_key] = {}
-
-                    ext = file_def.parsed.extension
-                    show_folders[show_folder][show_name][str(file_def.parsed.season)][
-                        ep_key
-                    ][ext] = file_def
-
-    # Handle episode names for each show folder
-    for show_folder, show_organized in show_folders.items():
-        logger.info(f"Handling episode names for show folder: {show_folder}")
-        handle_episode_names(
-            show_folder,
-            show_organized,
-            is_show=True,
-            use_episode_names=use_episode_names,
-            fetch_if_missing=fetch_if_missing,
-            force_fetch=force_fetch,
-        )
+    return fetched_folders
 
 
 def organize_files(
@@ -315,10 +299,15 @@ def organize_files(
     is_show: bool = True,
 ) -> FileOrganization:
     """
-    Scan folder and organize files by season/episode.
+    Scan folder and organize files by show/season/episode.
 
     Returns:
-        Nested dict: {season: {episode: {ext: FileDefinition}}}
+        Dict structure: {
+            show_name: {
+                'folder': show_folder_path,
+                'seasons': {season: {episode: {ext: FileDefinition}}}
+            }
+        }
 
     Raises:
         ValueError: If any file cannot be parsed
@@ -328,10 +317,11 @@ def organize_files(
     parsed_count = 0
     skipped_count = 0
 
+    # First pass: collect files from current directory
     for filename in os.listdir(folder):
         full_path = os.path.join(folder, filename)
 
-        # Skip directories
+        # Skip directories in first pass
         if os.path.isdir(full_path):
             logger.debug(f"Entering directory: {filename}")
             if recursive:
@@ -340,14 +330,19 @@ def organize_files(
                     recursive=True,
                     is_show=is_show,
                 )
-                for season, episodes in suborganized.items():
-                    organized.setdefault(season, {}).update(episodes)
+                # Merge subdirectory results
+                for show_name, show_data in suborganized.items():
+                    if show_name not in organized:
+                        organized[show_name] = show_data
+                    else:
+                        # Merge seasons for same show
+                        organized[show_name]["seasons"].update(show_data["seasons"])
             continue
 
         if "." not in filename:
             logger.debug(f"Skipping file with no extension: {filename}")
             continue
-        if filename in META_FILES:
+        if any(filename.endswith(meta) for meta in META_FILES):
             continue
         ext = os.path.splitext(filename)[1][1:].lower()  # get extension without dot
 
@@ -381,15 +376,33 @@ def organize_files(
             file_def.is_media = True
             logger.debug(f"Detected video file: {filename}")
 
-        # Organize by season/episode
-        name = parsed.show_name
+        # Get show name and determine show folder
+        show_name = parsed.show_name
         season = parsed.season
         episode = parsed.episode
         ext = parsed.extension
 
-        logger.debug(f"Organized: {filename} -> S{season}E{episode}.{ext}")
+        # Determine show folder path
+        file_path = Path(folder)
+        if "season" in file_path.name.lower() or file_path.name.startswith("Season"):
+            show_folder = str(file_path.parent)
+        else:
+            show_folder = folder
 
-        organized.setdefault(name, {}).setdefault(season, {}).setdefault(episode, {})[
+        logger.debug(f"Organized: {filename} -> {show_name} S{season}E{episode}.{ext}")
+
+        # Initialize show entry if needed
+        if show_name not in organized:
+            organized[show_name] = {
+                "folder": show_folder,
+                "seasons": {},
+            }
+        # Ensure folder is set to the deepest show folder
+        elif show_folder != folder:
+            organized[show_name]["folder"] = show_folder
+
+        # Add file to seasons structure
+        organized[show_name]["seasons"].setdefault(season, {}).setdefault(episode, {})[
             ext
         ] = file_def
 
@@ -449,6 +462,7 @@ def fill_missing_metadata(
                 f" codec={primary.parsed.codec},"
                 f" audio_codec={primary.parsed.audio_codec}"
             )
+            print(primary.parsed)
         if not primary.media:
             primary.media = extract_media_info(primary.filename)
 
@@ -456,8 +470,7 @@ def fill_missing_metadata(
             if not getattr(primary.media, field):
                 return
 
-            if not getattr(primary.parsed, field) or force_use_media_info:
-                setattr(primary.parsed, field, getattr(primary.media, field))
+            setattr(primary.parsed, field, getattr(primary.media, field))
 
         fill_missing("source")
         fill_missing("resolution")
@@ -507,7 +520,7 @@ def build_new_filename(
 
     if parsed.extension == "thumb.jpg":
         return f"{base}-thumb.jpg"
-    elif file_def.is_subtitle:
+    elif file_def.is_subtitle and parsed.lang:
         return f"{base}.{parsed.lang}.{parsed.extension}"
     else:
         return f"{base}.{parsed.extension}"
@@ -530,7 +543,8 @@ def rename_files(
     """
     ren_count = 0
 
-    for _, seasons in organized.items():
+    for show_data in organized.values():
+        seasons = show_data["seasons"]
         for season_files in seasons.values():
             for episode_files in season_files.values():
                 if not episode_files:
@@ -586,7 +600,11 @@ def check_missing(
         list of missing episode identifiers (e.g., "S01E02")
     """
     missing: set[str] = episode_name_index.keys() - set(["name"])
-    for show_name, seasons in organized.items():
+    for show_name, show_data in organized.items():
+        if "seasons" not in show_data:
+            continue
+
+        seasons = show_data["seasons"]
         for season, episodes in seasons.items():
             for episode, episode_files in episodes.items():
                 for file_def in episode_files.values():
@@ -612,7 +630,8 @@ def check_low_resolution(
         list of missing episode identifiers (e.g., "S01E02")
     """
     low_res: dict[str, str] = {}
-    for show_name, seasons in organized.items():
+    for show_name, show_data in organized.items():
+        seasons = show_data["seasons"]
         for season, episodes in sorted(seasons.items()):
             for episode, episode_files in episodes.items():
                 for file_def in episode_files.values():
@@ -639,7 +658,8 @@ def list_files(organized: FileOrganization, is_show: bool = True):
     from pandas import DataFrame
 
     data: list[list[str]] = []
-    for show_name, seasons in organized.items():
+    for show_name, show_data in organized.items():
+        seasons = show_data["seasons"]
         for season, episodes in seasons.items():
             for episode, episode_files in episodes.items():
                 for file_def in episode_files.values():
