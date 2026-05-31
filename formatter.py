@@ -91,7 +91,7 @@ def format_title(title: str, style: int = 1) -> str:
         return ""
 
     # Remove characters that are not be able to be used in filenames
-    illegal_chars = ",?!\\/"
+    illegal_chars = ",?!\\/:"
     for char in illegal_chars:
         title = title.replace(char, "")
 
