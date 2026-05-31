@@ -393,10 +393,23 @@ def organize_files(
 
         # Initialize show entry if needed
         if show_name not in organized:
-            organized[show_name] = {
-                "folder": show_folder,
-                "seasons": {},
-            }
+            for sn, sd in organized.items():
+                if sd["folder"] == show_folder:
+                    if not sn:
+                        # In case of empty existing show name,
+                        # replace with the current one
+                        organized[show_name] = sd
+                        organized.pop(sn)
+                    else:
+                        # Just use the existing one
+                        show_name = sn
+                        parsed.show_name = sn
+                    break
+            else:
+                organized[show_name] = {
+                    "folder": show_folder,
+                    "seasons": {},
+                }
         # Ensure folder is set to the deepest show folder
         elif show_folder != folder:
             organized[show_name]["folder"] = show_folder
@@ -518,7 +531,7 @@ def build_new_filename(
         codec=parsed.codec,
         hdr=parsed.hdr,
         audio_codec=parsed.audio_codec,
-        lang=parsed.lang if include_language else "",
+        lang=parsed.lang if include_language and not file_def.is_subtitle else "",
         extra=parsed.extra,
         release_group=parsed.release_group,
     )

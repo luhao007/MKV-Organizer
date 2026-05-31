@@ -159,8 +159,8 @@ SEASON_EPISODE_PATTERN: Final = re.compile(
 # Match resolution (e.g., 1080p, 720p, 2160p)
 RESOLUTION_PATTERN: Final = re.compile(r"(?i)(?<!\d)(?P<res>\d{3,4}p)(?!\d)")
 
-# For capitalization - split on dots, spaces, underscores, hyphens
-WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_-]+")
+# For capitalization - split on dots, spaces, underscores
+WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_]+")
 
 # For wrapping parentheses/brackets detection
 WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")

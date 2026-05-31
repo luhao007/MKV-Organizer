@@ -178,25 +178,19 @@ def extract_hdr(track: Track) -> str:
         if dv_match:
             profile = int(dv_match.group(1))
             if hdr_format_compatibility.startswith("hdr"):
-                comp_id = 1
+                compatibility = 1
             elif hdr_format_compatibility.startswith("sdr"):
-                comp_id = 2
+                compatibility = 2
             elif hdr_format_compatibility.startswith("hlg"):
-                comp_id = 4
+                compatibility = 4
             elif hdr_format_compatibility.startswith("blu-ray"):
-                comp_id = 6
+                compatibility = 6
             else:
-                comp_id = 0
-            if comp_id:
-                ret = f"DV {profile}.{comp_id}"
+                compatibility = 0
+            if compatibility:
+                ret = f"DV {profile}.{compatibility}"
             else:
                 ret = f"DV {profile}"
-            if profile == 7:
-                if "fel" in _extract_info(track, "hdr_format_settings"):
-                    ret += " FEL"
-                else:
-                    # BL+EL+RPU
-                    ret += " MEL"
             return ret
 
         # Dolby Vision detected but profile could not be parsed
