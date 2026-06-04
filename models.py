@@ -20,7 +20,7 @@ class ParsedFileInfo:
     source: str = ""  # e.g., WEB-DL, HDTV
     package: str = ""  # e.g., PROPER, REPACK
     hdr: str = ""  # e.g., HDR, 10bit, DV
-    audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
+    audio_codecs: list[str] | None = None  # e.g., DD5.1, DTS-HD.MA
     lang: str = ""  # e.g., chs, eng
     extra: str = ""  # Any extra info that doesn't fit into other fields
     release_group: str = ""
@@ -40,7 +40,7 @@ class MediaMetadata:
     codec: str = ""
     hdr: str = ""  # e.g., HDR, DV 8.1, SDR
     source: str = ""  # e.g., WEB-DL, HDTV
-    audio_codec: str = ""  # e.g., DD5.1, DTS-HD.MA
+    audio_codecs: list[str] | None = None  # e.g., DD5.1, DTS-HD.MA
     lang: str = ""  # TODO: placeholder for future, e.g., chs, eng
     extra: str = ""  # TODO: placeholder for future
 
@@ -54,7 +54,7 @@ class MediaMetadata:
                 self.codec,
                 self.hdr,
                 self.source,
-                self.audio_codec,
+                self.audio_codecs,
                 self.lang,
                 self.extra,
             ]

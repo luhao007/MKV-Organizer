@@ -125,28 +125,34 @@ def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, s
     return "", text
 
 
-def extract_through_known_lists(
-    lists: Iterable[str], text: str, repeated: bool = False
-) -> tuple[str, str]:
+def extract_through_known_lists(lists: Iterable[str], text: str) -> tuple[str, str]:
     """Extract a value using the known lists and corresponding regex pattern."""
     # Sort by length to ensure longer matches are found first
     # (e.g., "AMZN.WEB-DL" before "WEB-DL")
     pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
     pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
     extracted, remaining = extract_through_pattern(pattern, text)
-    if not repeated or not extracted:
-        return extracted, remaining
-
-    # For repeated patterns, we need to find all occurrences
-    extraced_set: list[str] = [extracted]
-    extraced_new, remaining = extract_through_pattern(pattern, remaining)
-    while extraced_new:
-        if extraced_new not in extraced_set:
-            extraced_set.append(extraced_new)
-        extraced_new, remaining = extract_through_pattern(pattern, remaining)
-    extracted = ".".join(extraced_set)
-
     return extracted, remaining
+
+
+def extract_through_known_lists_repeated(
+    lists: Iterable[str], text: str
+) -> tuple[list[str], str]:
+    """Extract a value using the known lists and corresponding regex pattern."""
+    # Sort by length to ensure longer matches are found first
+    # (e.g., "AMZN.WEB-DL" before "WEB-DL")
+    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
+    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
+
+    extracted_list: list[str] = []
+    remaining = text
+    extracted, remaining = extract_through_pattern(pattern, remaining)
+    while extracted:
+        if extracted not in extracted_list:
+            extracted_list.append(extracted)
+        extracted, remaining = extract_through_pattern(pattern, remaining)
+
+    return extracted_list, remaining
 
 
 def extract_resolution(text: str) -> Optional[str]:
@@ -193,7 +199,8 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
 
     if extension in SUBTITLE_FORMATS:
         # Extract language tags first (at the end)
-        lang, stem = extract_through_known_lists(LANGUAGES, stem, repeated=True)
+        lang, stem = extract_through_known_lists_repeated(LANGUAGES, stem)
+        lang = ".".join(lang)
     else:
         lang = ""
 
@@ -217,14 +224,17 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
     codec, unparsed = extract_through_known_lists(CODECS, unparsed)
     source, unparsed = extract_through_known_lists(SOURCES, unparsed)
-    package, unparsed = extract_through_known_lists(PACKAGE, unparsed, repeated=True)
-    hdr, unparsed = extract_through_known_lists(HDR, unparsed, repeated=True)
-    audio_codec, unparsed = extract_through_known_lists(
-        AUDIO_CODECS, unparsed, repeated=True
+    package, unparsed = extract_through_known_lists_repeated(PACKAGE, unparsed)
+    package = ".".join(package)
+    hdr, unparsed = extract_through_known_lists_repeated(HDR, unparsed)
+    hdr = ".".join(hdr)
+    audio_codecs, unparsed = extract_through_known_lists_repeated(
+        AUDIO_CODECS, unparsed
     )
 
     if extension not in SUBTITLE_FORMATS:
-        lang, unparsed = extract_through_known_lists(LANGUAGES, unparsed, repeated=True)
+        lang, unparsed = extract_through_known_lists_repeated(LANGUAGES, unparsed)
+        lang = ".".join(lang)
 
     # Extract title directly
     title = strip_trailing_metadata(unparsed)
@@ -234,7 +244,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     logger.debug(
         f"Extracted: show={show_name}, title={title}, resolution={resolution},"
         f" codec={codec}, source={source}, package={package}, hdr={hdr},"
-        f" audio_codec={audio_codec}, lang={lang}, extra={unparsed},"
+        f" audio_codecs={audio_codecs}, lang={lang}, extra={unparsed},"
         f" extension={extension}, release_group={release_group}"
     )
 
@@ -248,7 +258,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         source=source,
         package=package,
         hdr=hdr,
-        audio_codec=audio_codec,
+        audio_codecs=audio_codecs,
         lang=lang,
         extra=unparsed,
         release_group=release_group or "",

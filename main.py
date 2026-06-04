@@ -185,11 +185,6 @@ def main():
                     total_files += len(episode_files)
         logger.info(f"Found {total_episodes} episodes with {total_files} files")
 
-        if args.list:
-            list_files(organized, is_show=args.show, to_csv=False)
-        if args.list_csv:
-            list_files(organized, is_show=args.show, to_csv=True)
-
         # Handle episode names if this is a TV show folder
         fetched_folders: set[str] = set()
         if args.show:
@@ -219,6 +214,11 @@ def main():
             style=args.style,
             force_use_media_info=args.force_use_media_info,
         )
+
+        if args.list:
+            list_files(organized, is_show=args.show, to_csv=False)
+        if args.list_csv:
+            list_files(organized, is_show=args.show, to_csv=True)
 
         if ren_count:
             if dry_run:

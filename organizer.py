@@ -465,7 +465,7 @@ def fill_missing_metadata(
     if force_use_media_info or (
         not primary.parsed.resolution
         or not primary.parsed.codec
-        or not primary.parsed.audio_codec
+        or not primary.parsed.audio_codecs
         or not primary.parsed.hdr
     ):
         if not force_use_media_info:
@@ -473,7 +473,7 @@ def fill_missing_metadata(
                 f"Extracting media info for primary video: {primary.filename} \nCurrent"
                 f" parsed: resolution={primary.parsed.resolution},"
                 f" codec={primary.parsed.codec},"
-                f" audio_codec={primary.parsed.audio_codec}"
+                f" audio_codec={primary.parsed.audio_codecs}"
             )
             print(primary.parsed)
         if not primary.media:
@@ -489,7 +489,7 @@ def fill_missing_metadata(
         fill_missing("resolution")
         fill_missing("codec")
         fill_missing("hdr")
-        fill_missing("audio_codec")
+        fill_missing("audio_codecs")
 
     # Fill in missing data from primary video
     for file_def in files:
@@ -500,9 +500,22 @@ def fill_missing_metadata(
         file_def.parsed.source = primary.parsed.source
         file_def.parsed.codec = primary.parsed.codec
         file_def.parsed.package = primary.parsed.package
-        file_def.parsed.audio_codec = primary.parsed.audio_codec
+        file_def.parsed.audio_codecs = primary.parsed.audio_codecs
         file_def.parsed.hdr = primary.parsed.hdr
         file_def.parsed.release_group = primary.parsed.release_group
+
+
+def find_best_audio_codec(audio_codecs: Iterable[str] | None) -> str:
+    if not audio_codecs:
+        return ""
+    # Return the best audio codec if we have multiple
+    best_codecs = ["TrueHD", "DTS-X", "Atmos", "DTS", "FLAC", "DDP", "DD", "AC3", "AAC"]
+
+    for best_codec in best_codecs:
+        for codec in audio_codecs:
+            if best_codec in codec:
+                return codec
+    return ", ".join(audio_codecs)
 
 
 def build_new_filename(
@@ -530,7 +543,7 @@ def build_new_filename(
         package=parsed.package,
         codec=parsed.codec,
         hdr=parsed.hdr,
-        audio_codec=parsed.audio_codec,
+        audio_codec=find_best_audio_codec(parsed.audio_codecs),
         lang=parsed.lang if include_language and not file_def.is_subtitle else "",
         extra=parsed.extra,
         release_group=parsed.release_group,
@@ -693,13 +706,13 @@ def list_files(organized: FileOrganization, is_show: bool = True, to_csv: bool =
                         parsed.package,
                         parsed.codec,
                         parsed.hdr,
-                        parsed.audio_codec,
+                        " / ".join(parsed.audio_codecs) if parsed.audio_codecs else "",
                         parsed.release_group,
                     ]
                     data.append(l)
 
     if is_show:
-        columns = ["Show Name", "Season", "Episode", "TItle"]
+        columns = ["Show Name", "Season", "Episode", "Title"]
     else:
         columns = ["Movie Name", "Year"]
     columns += [

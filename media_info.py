@@ -384,15 +384,5 @@ def extract_media_info(video_path: str) -> MediaMetadata:
             logger.debug(f"Traceback: {traceback.format_exc()}")
             continue
 
-    def find_best_audio_codec(audio_codecs: set[str]) -> str:
-        # Return the best audio codec if we have multiple
-        best_codecs = ["TrueHD", "Atmos", "DTS", "FLAC", "DDP", "DD", "AC3", "AAC"]
-
-        for best_codec in best_codecs:
-            for codec in audio_codecs:
-                if best_codec in codec:
-                    return codec
-        return ", ".join(audio_codecs)
-
-    metadata.audio_codec = find_best_audio_codec(audio_codecs)
+    metadata.audio_codecs = list(audio_codecs) if audio_codecs else None
     return metadata
