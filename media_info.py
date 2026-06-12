@@ -25,7 +25,7 @@ HEIGHT_TO_RESOLUTION = {
 
 
 # ============================================================================
-# Extraction Utility Functions (moved from extraction_utils.py)
+# Private Utility Functions
 # ============================================================================
 
 
@@ -112,6 +112,20 @@ def _extract_dolby_vision_profile(
         return "DV"
 
     return None
+
+
+def _get_tracks(media_info: MediaInfo, track_type: str) -> list[Track]:
+    """
+    Get tracks of a specific type from MediaInfo.
+
+    Args:
+        media_info: MediaInfo object
+        track_type: Type of track to get (e.g., "video", "audio")
+
+    Returns:
+        List of Track objects
+    """
+    return getattr(media_info, track_type + "_tracks", [])
 
 
 # ============================================================================
@@ -361,20 +375,6 @@ def extract_source(track: Track) -> str:
         return "blu-ray"
     else:
         return ""
-
-
-def _get_tracks(media_info: MediaInfo, track_type: str) -> list[Track]:
-    """
-    Get tracks of a specific type from MediaInfo.
-
-    Args:
-        media_info: MediaInfo object
-        track_type: Type of track to get (e.g., "video", "audio")
-
-    Returns:
-        List of Track objects
-    """
-    return getattr(media_info, track_type + "_tracks", [])
 
 
 def extract_media_info(video_path: str) -> MediaMetadata:

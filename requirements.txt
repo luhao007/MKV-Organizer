@@ -1,3 +1,4 @@
+httpx
 logging
 pymediainfo
-httpx
+pytest

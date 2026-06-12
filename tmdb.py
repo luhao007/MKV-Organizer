@@ -19,6 +19,11 @@ TMDB_API_BASE: Final[str] = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE: Final[str] = "https://image.tmdb.org/p/original/"
 
 
+# ============================================================================
+# Private Utility Functions
+# ============================================================================
+
+
 def _get_api_key() -> str:
     """Read TMDB API key from tmdb-api.txt."""
     api_key_path = Path(__file__).parent / "tmdb-api.txt"
@@ -134,6 +139,11 @@ def _fetch_seasons_for_episodes(
             logger.warning(f"Failed to fetch season {season_num} from TMDB")
 
     return seasons_cache
+
+
+# ============================================================================
+# Public API
+# ============================================================================
 
 
 def fetch_episode_name(

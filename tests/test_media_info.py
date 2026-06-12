@@ -4,6 +4,9 @@ Functions that require actual pymediainfo Track objects or file I/O
 are tested with mock Track objects.
 """
 
+# This is a unit test file, private functions are imported and tested directly
+# pyright: reportPrivateUsage=false
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -33,7 +36,7 @@ class TestGetResolutionFromHeight:
             (240, "240p"),
         ],
     )
-    def test_standard_heights(self, height, expected):
+    def test_standard_heights(self, height: int, expected: str):
         assert get_resolution_from_height(height) == expected
 
     @pytest.mark.parametrize(
@@ -55,7 +58,7 @@ class TestGetResolutionFromHeight:
             (200, "240p"),
         ],
     )
-    def test_non_standard_heights(self, height, expected):
+    def test_non_standard_heights(self, height: int, expected: str):
         assert get_resolution_from_height(height) == expected
 
 

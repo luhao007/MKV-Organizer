@@ -1,7 +1,5 @@
 """Unit tests for organizer.py utility functions."""
 
-from typing import Any
-
 import pytest
 
 from models import FileDefinition, ParsedFileInfo
@@ -35,7 +33,7 @@ from organizer import (
         ("archive.tar.gz", ["gz"], True),
     ],
 )
-def test_check_file_type(filename, extensions, expected):
+def test_check_file_type(filename: str, extensions: list[str], expected: bool):
     assert check_file_type(filename, extensions) == expected
 
 

@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, mock_open, patch
 
-import pytest
-
 from tmdb import (
     _find_episode_name,
     _parse_nfo_xml,
@@ -11,6 +9,9 @@ from tmdb import (
     extract_id_from_folder_name,
     search_show_by_name,
 )
+
+# This is a unit test file, private functions are imported and tested directly
+# pyright: reportPrivateUsage=false
 
 
 # ============================================================================
@@ -49,7 +50,7 @@ class TestFindEpisodeName:
 
 class TestTmdbGet:
     @patch("tmdb.httpx.Client")
-    def test_successful_request(self, mock_client_class):
+    def test_successful_request(self, mock_client_class: MagicMock):
         mock_response = MagicMock()
         mock_response.json.return_value = {"results": [{"id": 123, "name": "Test"}]}
         mock_response.raise_for_status.return_value = None
@@ -62,7 +63,7 @@ class TestTmdbGet:
         assert result == {"results": [{"id": 123, "name": "Test"}]}
 
     @patch("tmdb.httpx.Client")
-    def test_http_error_returns_none(self, mock_client_class):
+    def test_http_error_returns_none(self, mock_client_class: MagicMock):
         from httpx import HTTPError
 
         mock_client = MagicMock()
@@ -73,7 +74,7 @@ class TestTmdbGet:
         assert result is None
 
     @patch("tmdb.httpx.Client")
-    def test_general_exception_returns_none(self, mock_client_class):
+    def test_general_exception_returns_none(self, mock_client_class: MagicMock):
         mock_client = MagicMock()
         mock_client.get.side_effect = RuntimeError("Unexpected")
         mock_client_class.return_value.__enter__.return_value = mock_client
@@ -90,7 +91,7 @@ class TestTmdbGet:
 class TestSearchShowByName:
     @patch("tmdb._tmdb_get")
     @patch("tmdb._get_api_key")
-    def test_returns_show_info(self, mock_api_key, mock_tmdb_get):
+    def test_returns_show_info(self, mock_api_key: MagicMock, mock_tmdb_get: MagicMock):
         mock_api_key.return_value = "fake_key"
         mock_tmdb_get.return_value = {
             "results": [
@@ -112,7 +113,9 @@ class TestSearchShowByName:
 
     @patch("tmdb._tmdb_get")
     @patch("tmdb._get_api_key")
-    def test_no_results_returns_none(self, mock_api_key, mock_tmdb_get):
+    def test_no_results_returns_none(
+        self, mock_api_key: MagicMock, mock_tmdb_get: MagicMock
+    ):
         mock_api_key.return_value = "fake_key"
         mock_tmdb_get.return_value = {"results": []}
 
@@ -121,7 +124,9 @@ class TestSearchShowByName:
 
     @patch("tmdb._tmdb_get")
     @patch("tmdb._get_api_key")
-    def test_api_error_returns_none(self, mock_api_key, mock_tmdb_get):
+    def test_api_error_returns_none(
+        self, mock_api_key: MagicMock, mock_tmdb_get: MagicMock
+    ):
         mock_api_key.return_value = "fake_key"
         mock_tmdb_get.return_value = None
 
@@ -136,15 +141,11 @@ class TestSearchShowByName:
 
 class TestExtractIdFromFolderName:
     def test_extracts_imdb_id(self):
-        result = extract_id_from_folder_name(
-            "/path/to/Show Name {imdb-tt1234567}"
-        )
+        result = extract_id_from_folder_name("/path/to/Show Name {imdb-tt1234567}")
         assert result == ("imdb", "tt1234567")
 
     def test_extracts_tmdb_id(self):
-        result = extract_id_from_folder_name(
-            "/path/to/Show Name {tmdb-123456}"
-        )
+        result = extract_id_from_folder_name("/path/to/Show Name {tmdb-123456}")
         assert result == ("tmdb", "123456")
 
     def test_no_id_returns_none(self):

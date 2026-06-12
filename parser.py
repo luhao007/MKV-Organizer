@@ -27,7 +27,7 @@ logger = get_logger(__name__)
 
 
 # ============================================================================
-# Extraction Utility Functions (moved from extraction_utils.py)
+# Private Utility Functions
 # ============================================================================
 
 
