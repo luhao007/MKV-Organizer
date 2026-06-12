@@ -26,6 +26,55 @@ from utils import get_logger
 logger = get_logger(__name__)
 
 
+# ============================================================================
+# Extraction Utility Functions (moved from extraction_utils.py)
+# ============================================================================
+
+
+def _extract_through_pattern_base(
+    pattern: re.Pattern[str], text: str
+) -> tuple[str, str]:
+    """Extract a value using the provided regex pattern."""
+    match = pattern.search(text)
+    if match:
+        res = match.group(1)
+        left = text[: match.start()].strip(" ._-")
+        right = text[match.end() :].strip(" ._-")
+        remaining = ".".join([left, right]) if left and right else left or right
+        return res, remaining
+    return "", text
+
+
+def _extract_from_list_single(lists: Iterable[str], text: str) -> tuple[str, str]:
+    """Extract single value from known lists."""
+    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
+    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
+    return _extract_through_pattern_base(pattern, text)
+
+
+def _extract_from_list_repeated(
+    lists: Iterable[str], text: str
+) -> tuple[list[str], str]:
+    """Extract multiple values from known lists."""
+    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
+    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
+
+    extracted_list: list[str] = []
+    remaining = text
+    extracted, remaining = _extract_through_pattern_base(pattern, remaining)
+    while extracted:
+        if extracted not in extracted_list:
+            extracted_list.append(extracted)
+        extracted, remaining = _extract_through_pattern_base(pattern, remaining)
+
+    return extracted_list, remaining
+
+
+# ============================================================================
+# Public API
+# ============================================================================
+
+
 def normalize_separators(text: str) -> str:
     """
     Normalize common filename separators to spaces.
@@ -116,48 +165,6 @@ def extract_movie_name(text: str) -> tuple[tuple[str, str], str]:
     return (text, ""), ""
 
 
-def extract_through_pattern(pattern: re.Pattern[str], text: str) -> tuple[str, str]:
-    """Extract a value using the provided regex pattern."""
-    match = pattern.search(text)
-    if match:
-        res = match.group(1)
-        left = text[: match.start()].strip(" ._-")
-        right = text[match.end() :].strip(" ._-")
-        remaining = ".".join([left, right]) if left and right else left or right
-        return res, remaining
-    return "", text
-
-
-def extract_through_known_lists(lists: Iterable[str], text: str) -> tuple[str, str]:
-    """Extract a value using the known lists and corresponding regex pattern."""
-    # Sort by length to ensure longer matches are found first
-    # (e.g., "AMZN.WEB-DL" before "WEB-DL")
-    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
-    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
-    extracted, remaining = extract_through_pattern(pattern, text)
-    return extracted, remaining
-
-
-def extract_through_known_lists_repeated(
-    lists: Iterable[str], text: str
-) -> tuple[list[str], str]:
-    """Extract a value using the known lists and corresponding regex pattern."""
-    # Sort by length to ensure longer matches are found first
-    # (e.g., "AMZN.WEB-DL" before "WEB-DL")
-    pattern_str = "|".join(sorted(map(re.escape, lists), key=len, reverse=True))
-    pattern = re.compile(rf"(?i)\b(?P<value>{pattern_str})\b")
-
-    extracted_list: list[str] = []
-    remaining = text
-    extracted, remaining = extract_through_pattern(pattern, remaining)
-    while extracted:
-        if extracted not in extracted_list:
-            extracted_list.append(extracted)
-        extracted, remaining = extract_through_pattern(pattern, remaining)
-
-    return extracted_list, remaining
-
-
 def extract_resolution(text: str) -> Optional[str]:
     """Extract resolution (e.g., 1080p, 720p)."""
     match = RESOLUTION_PATTERN.search(text)
@@ -202,13 +209,13 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
 
     if extension in SUBTITLE_FORMATS:
         # Extract language tags first (at the end)
-        lang, stem = extract_through_known_lists_repeated(LANGUAGES, stem)
+        lang, stem = _extract_from_list_repeated(LANGUAGES, stem)
         lang = ".".join(lang)
     else:
         lang = ""
 
     # Then extract release group (usually at the end after a hyphen)
-    release_group, stem = extract_through_pattern(RELEASE_GROUP_PATTERN, stem)
+    release_group, stem = _extract_through_pattern_base(RELEASE_GROUP_PATTERN, stem)
 
     if is_show:
         # Extract season and episode
@@ -224,7 +231,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     show_name = normalize_separators(show_name)
 
     # Extract resolution, codec, source, audio codec, language
-    identifier, unparsed = extract_through_pattern(IDENTIFIER_PATTERN, unparsed)
+    identifier, unparsed = _extract_through_pattern_base(IDENTIFIER_PATTERN, unparsed)
     imdb_id = ""
     tmdb_id = ""
     if identifier.startswith("{imdb-"):
@@ -234,21 +241,19 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         tmdb_id = identifier[6:-1]  # Extract TMDB ID from {tmdb-tv1234567}
         imdb_id = ""
 
-    edition, unparsed = extract_through_pattern(EDITION_PATTERN, unparsed)
-    resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
-    codec, unparsed = extract_through_known_lists(CODECS, unparsed)
-    source, unparsed = extract_through_known_lists(SOURCES, unparsed)
-    package, unparsed = extract_through_known_lists_repeated(PACKAGE, unparsed)
+    edition, unparsed = _extract_through_pattern_base(EDITION_PATTERN, unparsed)
+    resolution, unparsed = _extract_through_pattern_base(RESOLUTION_PATTERN, unparsed)
+    codec, unparsed = _extract_from_list_single(CODECS, unparsed)
+    source, unparsed = _extract_from_list_single(SOURCES, unparsed)
+    package, unparsed = _extract_from_list_repeated(PACKAGE, unparsed)
     package = ".".join(package)
-    hdr, unparsed = extract_through_known_lists_repeated(HDR, unparsed)
+    hdr, unparsed = _extract_from_list_repeated(HDR, unparsed)
     hdr = ".".join(hdr)
-    audio_codecs, unparsed = extract_through_known_lists_repeated(
-        AUDIO_CODECS, unparsed
-    )
-    extras, unparsed = extract_through_known_lists_repeated(EXTRA, unparsed)
+    audio_codecs, unparsed = _extract_from_list_repeated(AUDIO_CODECS, unparsed)
+    extras, unparsed = _extract_from_list_repeated(EXTRA, unparsed)
 
     if extension not in SUBTITLE_FORMATS:
-        lang, unparsed = extract_through_known_lists_repeated(LANGUAGES, unparsed)
+        lang, unparsed = _extract_from_list_repeated(LANGUAGES, unparsed)
         lang = ".".join(lang)
 
     # Extract title directly

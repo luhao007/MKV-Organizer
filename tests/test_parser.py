@@ -210,7 +210,7 @@ FULL_PARSE_TEST_CASES: Final[TestScenarios] = {
         "expected": {
             "show_name": "Thor Ragnarok",
             "edition": "{edition-IMAX}",
-            "identifier": "{imdb-tt3501632}",
+            "imdb_id": "tt3501632",
             "year": "2017",
             "hdr": "DV.8.1",
             "codec": "HEVC",

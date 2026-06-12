@@ -24,6 +24,101 @@ HEIGHT_TO_RESOLUTION = {
 }
 
 
+# ============================================================================
+# Extraction Utility Functions (moved from extraction_utils.py)
+# ============================================================================
+
+
+def _safe_extract_track_attribute(track: Track, field: str, default: str = "") -> str:
+    """Safely extract and format track attribute."""
+    try:
+        info: str | int | list[str | int] | None = getattr(track, field, None)
+        if info is None:
+            return default
+        if isinstance(info, list):
+            info = ",".join([str(i) for i in info])
+        return str(info).strip().lower()
+    except (AttributeError, TypeError, ValueError):
+        return default
+
+
+def _detect_codec_from_formats(
+    format_str: str,
+    codec_str: str,
+    codec_id_str: str,
+    format_version: str = "",
+    commercial_name: str = "",
+) -> Optional[str]:
+    """Detect codec type from format/codec/codec_id fields."""
+    codec = codec_str or codec_id_str
+    combined = format_str + codec
+
+    if any(x in combined for x in ["hevc", "hvc1", "hev1", "h.265", "h265"]):
+        return "HEVC"
+    if any(x in combined for x in ["avc", "h.264", "h264", "avc1"]):
+        return "H264"
+    if "av1" in combined:
+        return "AV1"
+    if any(x in combined for x in ["vp9", "vp-9"]):
+        return "VP9"
+    if "xvid" in codec or "xvid" in format_str:
+        return "XviD"
+    if "divx" in codec or "divx" in format_str:
+        return "DivX"
+    if "mpeg" in combined and "1" in format_version:
+        return "MPEG-1"
+
+    return None
+
+
+def _extract_dolby_vision_profile(
+    hdr_format: str,
+    hdr_format_profile: str,
+    hdr_format_commercial: str,
+    hdr_format_compatibility: str,
+    other_hdr_format: str,
+) -> Optional[str]:
+    """Extract Dolby Vision profile from HDR metadata."""
+    if "profile" in other_hdr_format:
+        dv_profile = re.search(r"profile: (\d{2}\.\d{2})", other_hdr_format)
+        if dv_profile:
+            return f"DV {dv_profile.group(1)}"
+
+    if (
+        "dolby vision" in hdr_format
+        or "dolby vision" in hdr_format_commercial
+        or "dv" in hdr_format_profile
+    ):
+        dv_match = re.match(
+            r"dv(?:he|h1|av)\.(\d{2})", hdr_format_profile, re.IGNORECASE
+        )
+        if dv_match:
+            profile = int(dv_match.group(1))
+            if hdr_format_compatibility.startswith("hdr"):
+                compatibility = 1
+            elif hdr_format_compatibility.startswith("sdr"):
+                compatibility = 2
+            elif hdr_format_compatibility.startswith("hlg"):
+                compatibility = 4
+            elif hdr_format_compatibility.startswith("blu-ray"):
+                compatibility = 6
+            else:
+                compatibility = 0
+            if compatibility:
+                return f"DV {profile}.{compatibility}"
+            else:
+                return f"DV {profile}"
+
+        return "DV"
+
+    return None
+
+
+# ============================================================================
+# Public API
+# ============================================================================
+
+
 def get_resolution_from_height(height: int) -> str:
     """
     Convert video height to resolution string.
@@ -76,15 +171,6 @@ def extract_height(video_track: Track) -> Optional[int]:
     return None
 
 
-def _extract_info(track: Track, field: str) -> str:
-    info: str | int | list[str | int] | None = getattr(track, field)
-    if info is None:
-        return ""
-    if isinstance(info, list):
-        info = ",".join([str(i) for i in info])
-    return str(info).strip().lower()
-
-
 def extract_video_codec(track: Track) -> str:
     """
     Extract video codec from format/codec fields.
@@ -96,40 +182,14 @@ def extract_video_codec(track: Track) -> str:
     - XviD -> XviD
     - DivX -> DivX
     """
-    fmt = _extract_info(track, "format")
-    fmt_ver = _extract_info(track, "format_version")
-    codec = _extract_info(track, "codec")
-    codec_id = _extract_info(track, "codec_id")
-    codec = codec or codec_id  # Some formats use codec_id instead of codec
+    fmt = _safe_extract_track_attribute(track, "format")
+    fmt_ver = _safe_extract_track_attribute(track, "format_version")
+    codec = _safe_extract_track_attribute(track, "codec")
+    codec_id = _safe_extract_track_attribute(track, "codec_id")
 
-    combined = fmt + codec
-
-    # HEVC / H.265 -> HEVC
-    if any(x in combined for x in ["hevc", "hvc1", "hev1", "h.265", "h265"]):
-        return "HEVC"
-
-    # AVC / H.264 -> x264
-    if any(x in combined for x in ["avc", "h.264", "h264", "avc1"]):
-        return "H264"
-
-    # AV1
-    if "av1" in combined:
-        return "AV1"
-
-    if any(x in combined for x in ["vp9", "vp-9"]):
-        return "VP9"
-
-    # XviD
-    if "xvid" in codec or "xvid" in fmt:
-        return "XviD"
-
-    # DivX
-    if "divx" in codec or "divx" in fmt:
-        return "DivX"
-
-    # MPEG-1:
-    if "mpeg" in combined and "1" in fmt_ver:
-        return "MPEG-1"
+    detected = _detect_codec_from_formats(fmt, codec, codec_id, fmt_ver)
+    if detected:
+        return detected
 
     raise ValueError(
         f"Unknown codec for format='{fmt}', format_version='{fmt_ver}', codec='{codec}'"
@@ -151,50 +211,26 @@ def extract_hdr(track: Track) -> str:
         - "HDR" for HDR10 / HDR10+ / HLG content
         - "SDR" for standard dynamic range
     """
-    hdr_format = _extract_info(track, "hdr_format")
-    hdr_format_commercial = _extract_info(track, "hdr_format_commercial")
-    hdr_format_compatibility = _extract_info(track, "hdr_format_compatibility")
-    hdr_format_profile = _extract_info(track, "hdr_format_profile")
-    other_hdr_format = _extract_info(track, "other_hdr_format")
+    hdr_format = _safe_extract_track_attribute(track, "hdr_format")
+    hdr_format_commercial = _safe_extract_track_attribute(
+        track, "hdr_format_commercial"
+    )
+    hdr_format_compatibility = _safe_extract_track_attribute(
+        track, "hdr_format_compatibility"
+    )
+    hdr_format_profile = _safe_extract_track_attribute(track, "hdr_format_profile")
+    other_hdr_format = _safe_extract_track_attribute(track, "other_hdr_format")
 
     # Try to extract Dolby Vision profile
-    # https://dolby.my.salesforce.com/sfc/p/700000009YuG/a/4u000000l6G4/4R18riPaaW3gxpVx7XwyQLdEITLFjB.w.Si0LoQR5j8:w
-    if "profile" in other_hdr_format:
-        # Some video already put a DV profile in other_hdr_format
-        dv_profile = re.search(r"profile: (\d{2}\.\d{2})", other_hdr_format)
-        if dv_profile:
-            return f"DV {dv_profile.group(1)}"
-    # Try to extract DV profile from hdr_format_profile
-    if (
-        "dolby vision" in hdr_format
-        or "dolby vision" in hdr_format_commercial
-        or "dv" in hdr_format_profile
-    ):
-        # DV profile is usually stored in hdr_format_profile
-        # Typical format: "dvhe.08" or "dvav.09"
-        dv_match = re.match(
-            r"dv(?:he|h1|av)\.(\d{2})", hdr_format_profile, re.IGNORECASE
-        )
-        if dv_match:
-            profile = int(dv_match.group(1))
-            if hdr_format_compatibility.startswith("hdr"):
-                compatibility = 1
-            elif hdr_format_compatibility.startswith("sdr"):
-                compatibility = 2
-            elif hdr_format_compatibility.startswith("hlg"):
-                compatibility = 4
-            elif hdr_format_compatibility.startswith("blu-ray"):
-                compatibility = 6
-            else:
-                compatibility = 0
-            if compatibility:
-                ret = f"DV {profile}.{compatibility}"
-            else:
-                ret = f"DV {profile}"
-            return ret
-
-        # Dolby Vision detected but profile could not be parsed
-        return "DV"
+    dv_result = _extract_dolby_vision_profile(
+        hdr_format,
+        hdr_format_profile,
+        hdr_format_commercial,
+        hdr_format_compatibility,
+        other_hdr_format,
+    )
+    if dv_result:
+        return dv_result
 
     # Check for HDR (HDR10, HDR10+, HLG, SMPTE ST 2086, etc.)
     if "hdr10+" in hdr_format_profile:
@@ -208,9 +244,26 @@ def extract_hdr(track: Track) -> str:
 
 
 def extract_channels(track: Track) -> str:
-    channels = _extract_info(track, "channels") or _extract_info(track, "channel_s")
+    """
+    Extract audio channel configuration from a MediaInfo track.
+
+    Converts raw channel counts to standard labels: 8→7.1, 6→5.1, 2→2.0.
+    Falls back to counting elements in ``channel_layout`` if ``channels`` is absent.
+
+    Args:
+        track: A pymediainfo Track (typically an audio track).
+
+    Returns:
+        Channel string (e.g., "7.1", "5.1", "2.0") or "" if unknown.
+
+    Raises:
+        ValueError: If the channel count doesn't match a known configuration.
+    """
+    channels = _safe_extract_track_attribute(
+        track, "channels"
+    ) or _safe_extract_track_attribute(track, "channel_s")
     if not channels:
-        channel_layout = _extract_info(track, "channel_layout")
+        channel_layout = _safe_extract_track_attribute(track, "channel_layout")
         if channel_layout:
             channels = len(channel_layout.split(" "))
         else:
@@ -240,12 +293,12 @@ def extract_audio_codec(track: Track) -> str:
     - MP3 -> MP3
     - Opus -> Opus
     """
-    fmt = _extract_info(track, "format")
-    codec = _extract_info(track, "codec")
-    codec_id = _extract_info(track, "codec_id")
+    fmt = _safe_extract_track_attribute(track, "format")
+    codec = _safe_extract_track_attribute(track, "codec")
+    codec_id = _safe_extract_track_attribute(track, "codec_id")
     codec = codec or codec_id  # Some formats use codec_id instead of codec
-    commercial_name = _extract_info(track, "commercial_name")
-    fmt_info = _extract_info(track, "format_info")
+    commercial_name = _safe_extract_track_attribute(track, "commercial_name")
+    fmt_info = _safe_extract_track_attribute(track, "format_info")
 
     if "aac" in fmt:
         ret = "AAC"
@@ -292,7 +345,18 @@ def extract_audio_codec(track: Track) -> str:
 
 
 def extract_source(track: Track) -> str:
-    source = _extract_info(track, "source")
+    """
+    Extract source media type from a MediaInfo track.
+
+    Detects whether the source is a Blu-ray disc.
+
+    Args:
+        track: A pymediainfo Track.
+
+    Returns:
+        ``"blu-ray"`` if the source field contains "blu-ray", otherwise ``""``.
+    """
+    source = _safe_extract_track_attribute(track, "source")
     if "blu-ray" in source:
         return "blu-ray"
     else:

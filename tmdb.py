@@ -32,64 +32,70 @@ def _get_api_key() -> str:
     return api_key
 
 
-def _search_show(api_key: str, show_name: str) -> Optional[dict[str, str | int]]:
-    """Search for a TV show by name on TMDB."""
-    url = f"{TMDB_API_BASE}/search/tv"
-    params = {"api_key": api_key, "query": show_name}
+def _tmdb_get(endpoint: str, params: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Make a GET request to TMDB API and return JSON response.
 
+    Args:
+        endpoint: The API endpoint path (e.g., "/search/tv", "/tv/123/season/1").
+        params: Query parameters dict (must include "api_key").
+
+    Returns:
+        Parsed JSON response dict, or None on any error.
+    """
+    url = f"{TMDB_API_BASE}{endpoint}"
     try:
         with httpx.Client(timeout=10.0) as client:
             response = client.get(url, params=params)
             response.raise_for_status()
-            data = response.json()
-
-            if data.get("results"):
-                # Return the first result with highest popularity
-                results = data["results"]
-                best = max(results, key=lambda x: x.get("popularity", 0))
-                logger.info(f"Found TMDB show: {best['name']} (id: {best['id']})")
-                return best
-
-            logger.warning(f"No TMDB results for show name: '{show_name}'")
-            return None
-
+            return response.json()
     except httpx.HTTPError as e:
-        logger.error(f"HTTP error searching TMDB for '{show_name}': {e}")
+        logger.error(f"HTTP error on TMDB {endpoint}: {e}")
         return None
     except Exception as e:
-        logger.error(f"Error searching TMDB for '{show_name}': {e}")
+        logger.error(f"Error on TMDB {endpoint}: {e}")
         return None
+
+
+def _find_episode_name(
+    episodes: list[dict[str, Any]], episode_num: int
+) -> Optional[str]:
+    """Find episode name by episode number in a list of TMDB episode dicts."""
+    for ep in episodes:
+        if int(ep.get("episode_number", 0)) == episode_num:
+            ep_name = ep.get("name", "")
+            if ep_name:
+                return ep_name
+    return None
+
+
+def _search_show(api_key: str, show_name: str) -> Optional[dict[str, str | int]]:
+    """Search for a TV show by name on TMDB."""
+    data = _tmdb_get("/search/tv", {"api_key": api_key, "query": show_name})
+    if not data:
+        return None
+
+    if data.get("results"):
+        results = data["results"]
+        best = max(results, key=lambda x: x.get("popularity", 0))
+        logger.info(f"Found TMDB show: {best['name']} (id: {best['id']})")
+        return best
+
+    logger.warning(f"No TMDB results for show name: '{show_name}'")
+    return None
 
 
 def _get_season_episodes(
     api_key: str, tmdb_show_id: int, season_number: int
 ) -> Optional[list[dict[str, Any]]]:
     """Get all episodes for a specific season from TMDB."""
-    url = f"{TMDB_API_BASE}/tv/{tmdb_show_id}/season/{season_number}"
-    params = {"api_key": api_key}
-
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
-
-            episodes = data.get("episodes", [])
-            logger.info(f"Found {len(episodes)} episodes for season {season_number}")
-            return episodes
-
-    except httpx.HTTPError as e:
-        logger.error(
-            f"HTTP error fetching season {season_number} from TMDB (show id:"
-            f" {tmdb_show_id}): {e}"
-        )
+    endpoint = f"/tv/{tmdb_show_id}/season/{season_number}"
+    data = _tmdb_get(endpoint, {"api_key": api_key})
+    if not data:
         return None
-    except Exception as e:
-        logger.error(
-            f"Error fetching season {season_number} from TMDB (show id:"
-            f" {tmdb_show_id}): {e}"
-        )
-        return None
+
+    episodes = data.get("episodes", [])
+    logger.info(f"Found {len(episodes)} episodes for season {season_number}")
+    return episodes
 
 
 def _fetch_seasons_for_episodes(
@@ -169,16 +175,12 @@ def fetch_episode_name(
         return None
 
     # Find the matching episode by episode number
-    for ep in episodes:
-        ep_number = int(ep.get("episode_number", 0))
-        if ep_number == episode_num:
-            ep_name = ep.get("name", "")
-            if ep_name:
-                logger.info(
-                    f"Found TMDB episode name: S{season_num:02d}E{episode_num:02d} -"
-                    f" {ep_name}"
-                )
-                return ep_name
+    ep_name = _find_episode_name(episodes, episode_num)
+    if ep_name:
+        logger.info(
+            f"Found TMDB episode name: S{season_num:02d}E{episode_num:02d} - {ep_name}"
+        )
+        return ep_name
 
     logger.warning(
         f"No TMDB episode found for S{season_num:02d}E{episode_num:02d} "
@@ -301,17 +303,13 @@ def fetch_episode_names_batch(
                 continue
 
             # Find the matching episode and update title
-            for ep in episodes_for_season:
-                if int(ep.get("episode_number", 0)) == episode_num:
-                    ep_name = ep.get("name", "")
-                    if ep_name:
-                        file_def.parsed.title = ep_name
-                        logger.debug(
-                            f"Updated S{season_num:02d}E{episode_num:02d} title:"
-                            f" {ep_name}"
-                        )
-                        updated_any = True
-                    break
+            ep_name = _find_episode_name(episodes_for_season, episode_num)
+            if ep_name:
+                file_def.parsed.title = ep_name
+                logger.debug(
+                    f"Updated S{season_num:02d}E{episode_num:02d} title: {ep_name}"
+                )
+                updated_any = True
 
     return updated_any
 
@@ -446,6 +444,36 @@ def extract_id_from_folder_name(folder_path: str) -> Optional[tuple[str, str]]:
     return None
 
 
+def _parse_nfo_xml(
+    nfo_path: str, field_map: dict[str, str], label: str
+) -> Optional[dict[str, str]]:
+    """Parse an NFO XML file, extracting text from elements defined by field_map.
+
+    Args:
+        nfo_path: Path to the XML file.
+        field_map: Dict mapping XML element names → result dict keys.
+        label: Human-readable label for logging (e.g., "tvshow.nfo").
+
+    Returns:
+        Dict with extracted values, or None on error.
+    """
+    try:
+        tree = ET.parse(nfo_path)
+        root = tree.getroot()
+        result: dict[str, str] = {}
+        for elem_name, result_key in field_map.items():
+            elem = root.find(elem_name)
+            if elem is not None and elem.text:
+                result[result_key] = elem.text
+        if result:
+            logger.info(f"Parsed {label}: {result}")
+            return result
+        return None
+    except Exception as e:
+        logger.error(f"Error parsing {label}: {e}")
+        return None
+
+
 def parse_tvshow_nfo(nfo_path: str) -> Optional[dict[str, str]]:
     """
     Parse tvshow.nfo XML file to extract IDs.
@@ -453,38 +481,16 @@ def parse_tvshow_nfo(nfo_path: str) -> Optional[dict[str, str]]:
     Returns:
         Dict with 'imdb_id' and/or 'tmdb_id' keys, or None if parsing fails.
     """
-    try:
-        tree = ET.parse(nfo_path)
-        root = tree.getroot()
-
-        result: dict[str, str] = {}
-
-        # Try to find imdb_id
-        imdb_elem = root.find("imdb_id")
-        if imdb_elem is not None and imdb_elem.text:
-            result["imdb_id"] = imdb_elem.text
-
-        # Try to find tmdbid
-        tmdb_elem = root.find("tmdbid")
-        if tmdb_elem is not None and tmdb_elem.text:
-            result["tmdb_id"] = tmdb_elem.text
-
-        title_elem = root.find("originaltitle")
-        if title_elem is not None and title_elem.text:
-            result["original_title"] = title_elem.text
-
-        year_elem = root.find("year")
-        if year_elem is not None and year_elem.text:
-            result["year"] = year_elem.text
-
-        if result:
-            logger.info(f"Parsed tvshow.nfo: {result}")
-            return result
-
-        return None
-    except Exception as e:
-        logger.error(f"Error parsing tvshow.nfo: {e}")
-        return None
+    return _parse_nfo_xml(
+        nfo_path,
+        {
+            "imdb_id": "imdb_id",
+            "tmdbid": "tmdb_id",
+            "originaltitle": "original_title",
+            "year": "year",
+        },
+        "tvshow.nfo",
+    )
 
 
 def parse_movie_info(nfo_path: str) -> Optional[dict[str, str]]:
@@ -494,38 +500,16 @@ def parse_movie_info(nfo_path: str) -> Optional[dict[str, str]]:
     Returns:
         Dict with 'imdb_id' and/or 'tmdb_id' keys, or None if parsing fails.
     """
-    try:
-        tree = ET.parse(nfo_path)
-        root = tree.getroot()
-
-        result: dict[str, str] = {}
-
-        # Try to find imdb_id
-        imdb_elem = root.find("imdbid")
-        if imdb_elem is not None and imdb_elem.text:
-            result["imdb_id"] = imdb_elem.text
-
-        # Try to find tmdbid
-        tmdb_elem = root.find("tmdbid")
-        if tmdb_elem is not None and tmdb_elem.text:
-            result["tmdb_id"] = tmdb_elem.text
-
-        title_elem = root.find("originaltitle")
-        if title_elem is not None and title_elem.text:
-            result["original_title"] = title_elem.text
-
-        year_elem = root.find("year")
-        if year_elem is not None and year_elem.text:
-            result["year"] = year_elem.text
-
-        if result:
-            logger.info(f"Parsed movie info: {result}")
-            return result
-
-        return None
-    except Exception as e:
-        logger.error(f"Error parsing movie info: {e}")
-        return None
+    return _parse_nfo_xml(
+        nfo_path,
+        {
+            "imdbid": "imdb_id",
+            "tmdbid": "tmdb_id",
+            "originaltitle": "original_title",
+            "year": "year",
+        },
+        "movie info",
+    )
 
 
 def _get_show_info_by_tmdb_id(

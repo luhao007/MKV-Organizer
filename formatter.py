@@ -119,7 +119,21 @@ def format_known(
     rename_mapping: Optional[dict[str, str]] = None,
     style: int = 1,
 ) -> str:
-    """Format a value by matching it against a known list (case-insensitive)."""
+    """
+    Normalize a metadata value against a known list (case-insensitive).
+
+    If a match is found, the value is replaced with the canonical form.
+    Dot/space separators are adjusted based on ``style`` (1=dots, 2=spaces).
+
+    Args:
+        value: The raw metadata string to normalize.
+        known_list: Iterable of canonical value names.
+        rename_mapping: Optional dict mapping aliases → canonical names.
+        style: 1 for dot-separated output, 2 for space-separated.
+
+    Returns:
+        Normalized value string, or ``""`` if input is empty.
+    """
     if not value:
         return ""
 
@@ -146,6 +160,18 @@ def format_known(
 
 
 def normalize_illegal_chars(text: str) -> str:
+    """
+    Remove or replace characters that are illegal in filenames.
+
+    Removes: ``,`` ``?`` ``!`` ``\\`` ``/`` ``:``
+    Replaces ``*`` with ``-``.
+
+    Args:
+        text: Raw string that may contain illegal filename characters.
+
+    Returns:
+        Cleaned string safe for use as a file or folder name.
+    """
     illegal_chars = ",?!\\/:"
     for char in illegal_chars:
         text = text.replace(char, "")
@@ -175,24 +201,38 @@ def build_filename(
     """
     Build a standardized filename from components.
 
-    Format: "ShowName.S01E01.Title.1080p.x265-GROUP"
+    **Style 1** (dot-separated):
+        ``Show.Name.S01E01.{id}.Title.1080p.HEVC.DV.WEB-DL.TrueHD.Atmos.7.1-GROUP``
+
+    **Style 2** (space-separated, metadata in brackets):
+        ``Show Name S01E01 {id} - Title [1080p][HEVC][DV][WEB-DL][TrueHD Atmos 7.1]-GROUP``
+
+    Empty/optional fields are silently omitted.
 
     Args:
-        show_name: Show/series name
-        season: Season number (should be 2 digits like "01")
-        episode: Episode number (should be 2 digits like "10")
-        title: Episode title
-        year: Release year
-        resolution: Video resolution (e.g., "1080p")
-        codec: Video codec (e.g., "x265")
-        audio_codec: Audio codec (e.g., "DD5.1")
-        lang: Language code (e.g., "eng")
-        source: Source type (e.g., "WEB-DL")
-        extra: Extra information (e.g., "REPACK")
-        release_group: Release group name (e.g., "RARBG")
+        style: 1 for dot-separated, 2 for space-separated with brackets.
+        show_name: Show or movie name.
+        season: Season number (zero-padded, e.g., ``"01"``).
+        episode: Episode number (zero-padded, e.g., ``"10"``).
+        title: Episode or movie title.
+        year: Release year (movies only).
+        identifier: IMDb/TMDB identifier in braces (e.g., ``"{imdb-tt1234567}"``).
+        edition: Edition label (e.g., ``"Director's Cut"``).
+        resolution: Video resolution (e.g., ``"1080p"``).
+        codec: Video codec (e.g., ``"HEVC"``).
+        hdr: HDR format (e.g., ``"DV"``, ``"HDR"``).
+        source: Source type (e.g., ``"WEB-DL"``).
+        package: Release package (e.g., ``"REPACK"``).
+        audio_codec: Audio codec with channels (e.g., ``"TrueHD.Atmos.7.1"``).
+        lang: Language code (e.g., ``"eng"``).
+        extras: Additional tags (e.g., ``["IMAX.Enhanced"]``).
+        release_group: Release group name (e.g., ``"RARBG"``).
 
     Returns:
-        Formatted filename without extension
+        Formatted filename string (without extension).
+
+    Raises:
+        ValueError: If ``style`` is not 1 or 2.
     """
     metas = [
         format_resolution(resolution),

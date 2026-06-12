@@ -5,26 +5,143 @@ import traceback
 from formatter import build_filename, normalize_illegal_chars
 from parser import parse_filename
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Generator, Iterable, Optional
 
 from config import EPISODE_NAME_FILE, LANGUAGES, META_FILES, VIDEO_FORMATS
 from media_info import extract_media_info
-from models import FileDefinition, FileOrganization
+from models import FileDefinition, FileOrganization, ShowData
 from utils import get_logger
 
 logger = get_logger(__name__)
 
 
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
+
+def check_file_type(filename: str, extensions: Iterable[str]) -> bool:
+    """Check if file has one of the specified extensions."""
+    ext = filename.split(".")[-1].lower()
+    return ext in extensions
+
+
+def iterate_organized_episodes(
+    organized: FileOrganization,
+) -> Generator[tuple[str, ShowData, str, str, dict[str, FileDefinition]]]:
+    """
+    Iterate through all episodes in organized file structure.
+
+    Yields:
+        Tuple of (show_name, show_data, season, episode, episode_files)
+    """
+    for show_name, show_data in organized.items():
+        if "seasons" not in show_data:
+            continue
+
+        seasons = show_data["seasons"]
+        for season, season_files in seasons.items():
+            for episode, episode_files in season_files.items():
+                yield show_name, show_data, season, episode, episode_files
+
+
+def has_video_file(episode_files: dict[str, FileDefinition]) -> bool:
+    """Check if episode has at least one video file."""
+    return any(not file_def.is_subtitle for file_def in episode_files.values())
+
+
+def get_all_episode_files(
+    episode_files: dict[str, FileDefinition],
+) -> list[FileDefinition]:
+    """Get all FileDefinition objects from episode_files dict."""
+    return list(episode_files.values())
+
+
+def get_video_files(episode_files: dict[str, FileDefinition]) -> list[FileDefinition]:
+    """Get only video files (non-subtitles) from episode_files."""
+    return [f for f in episode_files.values() if not f.is_subtitle]
+
+
+def get_subtitle_files(
+    episode_files: dict[str, FileDefinition],
+) -> list[FileDefinition]:
+    """Get only subtitle files from episode_files."""
+    return [f for f in episode_files.values() if f.is_subtitle]
+
+
+def extract_identifier_from_organized(
+    show_data: ShowData, show_name: str = ""
+) -> tuple[str, str, str]:
+    """
+    Extract identifier, year, and updated show name from show data.
+
+    Returns:
+        Tuple of (identifier, year, updated_show_name)
+    """
+    identifier = ""
+    year = ""
+    updated_show_name = show_name
+
+    seasons = show_data.get("seasons", {})
+    for season_episodes in seasons.values():
+        for episode_files in season_episodes.values():
+            video_files = get_video_files(episode_files)
+            for file_def in video_files:
+                if file_def.parsed.imdb_id:
+                    identifier = f"{{imdb-{file_def.parsed.imdb_id}}}"
+                elif file_def.parsed.tmdb_id:
+                    identifier = f"{{tmdb-{file_def.parsed.tmdb_id}}}"
+                year = file_def.parsed.year
+                break
+            if identifier and year:
+                break
+        if identifier and year:
+            break
+
+    return identifier, year, updated_show_name
+
+
+def apply_to_all_episodes(
+    organized: FileOrganization,
+    apply_func: Callable[[str, ShowData, str, str, dict[str, FileDefinition]], None],
+) -> None:
+    """Apply a function to all episodes in organized structure."""
+    for (
+        show_name,
+        show_data,
+        season,
+        episode,
+        episode_files,
+    ) in iterate_organized_episodes(organized):
+        apply_func(show_name, show_data, season, episode, episode_files)
+
+
+def build_season_episode_key(season: str, episode: str) -> str:
+    """Build the key format for season/episode indexing."""
+    return f"{season}|{episode}"
+
+
+def parse_season_episode_key(key: str) -> tuple[str, str]:
+    """Parse season/episode key back into components."""
+    parts = key.split("|")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid season/episode key: {key}")
+    return parts[0], parts[1]
+
+
+# ============================================================================
+# File Type Checking
+# ============================================================================
+
+
 def is_video_file(filename: str) -> bool:
     """Check if file is a supported video format."""
-    ext = filename.split(".")[-1].lower()
-    return ext in VIDEO_FORMATS
+    return check_file_type(filename, VIDEO_FORMATS)
 
 
 def is_subtitle_file(filename: str) -> bool:
     """Check if file is a subtitle file."""
-    ext = filename.split(".")[-1].lower()
-    return ext in ["srt", "ass", "ssa", "sub"]
+    return check_file_type(filename, ["srt", "ass", "ssa", "sub"])
 
 
 def get_subtitle_language(filename: str) -> str:
@@ -42,6 +159,19 @@ def get_subtitle_language(filename: str) -> str:
 
 
 def load_episode_name_index(folder: str) -> dict[str, str]:
+    """Parse an episode_names.txt file and return a season/episode → title map.
+
+    The file format is:
+        Show Name          (line 1)
+        S#|E#|Episode Title (subsequent lines)
+
+    Args:
+        folder: Path to the folder containing episode_names.txt.
+
+    Returns:
+        Dict with key ``"name"`` → show_name and ``"SS|EE"`` → title entries.
+        Returns an empty dict if the file doesn't exist.
+    """
     index_path = Path(folder) / EPISODE_NAME_FILE
     if not index_path.exists():
         return {}
@@ -117,7 +247,7 @@ def write_episode_name_index(
                 if not parsed.title:
                     continue
 
-                key = f"{parsed.season}|{parsed.episode}"
+                key = build_season_episode_key(parsed.season, parsed.episode)
                 mappings[key] = parsed.title
 
         if not mappings:
@@ -134,7 +264,7 @@ def write_episode_name_index(
                 file.write(show_name)
                 file.write("\n")
                 for key in sorted(mappings):
-                    season, episode = key.split("|", 2)
+                    season, episode = parse_season_episode_key(key)
                     file.write(f"{season}|{episode}|{mappings[key]}\n")
 
             logger.info(f"Exported episode names to: {index_path}")
@@ -167,39 +297,42 @@ def apply_episode_names_from_file(
         return False
 
     applied_any = False
-    for show_data in organized.values():
-        if "seasons" not in show_data:
-            continue
 
-        seasons = show_data["seasons"]
-        for season_files in seasons.values():
-            for episode_files in season_files.values():
-                for file_def in episode_files.values():
-                    if file_def.is_subtitle:
-                        continue
+    def process_episode(
+        show_name: str,
+        show_data: ShowData,
+        season: str,
+        episode: str,
+        episode_files: dict[str, FileDefinition],
+    ):
+        nonlocal applied_any
+        for file_def in get_all_episode_files(episode_files):
+            if file_def.is_subtitle:
+                continue
 
-                    # Build key for lookup
-                    try:
-                        season_str = str(int(file_def.parsed.season)).zfill(2)
-                        episode_str = str(int(file_def.parsed.episode)).zfill(2)
-                    except (ValueError, TypeError):
-                        logger.warning(
-                            "Invalid season/episode:"
-                            f" {file_def.parsed.season}/{file_def.parsed.episode}"
-                        )
-                        continue
+            # Build key for lookup
+            try:
+                season_str = str(int(file_def.parsed.season)).zfill(2)
+                episode_str = str(int(file_def.parsed.episode)).zfill(2)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Invalid season/episode:"
+                    f" {file_def.parsed.season}/{file_def.parsed.episode}"
+                )
+                continue
 
-                    key = f"{season_str}|{episode_str}"
+            key = build_season_episode_key(season_str, episode_str)
 
-                    # Apply episode name if found and not already set
-                    if key in index and file_def.parsed.title != index[key]:
-                        file_def.parsed.title = index[key]
-                        logger.debug(
-                            "Applied episode name from file: "
-                            f"S{season_str}E{episode_str} - {index[key]}"
-                        )
-                        applied_any = True
+            # Apply episode name if found and not already set
+            if key in index and file_def.parsed.title != index[key]:
+                file_def.parsed.title = index[key]
+                logger.debug(
+                    "Applied episode name from file: "
+                    f"S{season_str}E{episode_str} - {index[key]}"
+                )
+                applied_any = True
 
+    apply_to_all_episodes(organized, process_episode)
     return applied_any
 
 
@@ -447,9 +580,15 @@ def fill_missing_metadata(
     force_use_media_info: bool = False,
 ) -> None:
     """
-    Fill missing metadata fields from available sources.
+    Fill missing metadata fields from the primary video file's MediaInfo data.
 
-    Uses primary video file as source for resolution/codec for all files.
+    If metadata fields (resolution, codec, HDR, audio_codecs, source) are
+    missing from parsed info, they are extracted from the media file and
+    propagated to all files in the episode group.
+
+    Args:
+        files: Iterable of FileDefinition objects for one episode.
+        force_use_media_info: If True, re-extract MediaInfo even if fields exist.
     """
     # Find primary video file
     primary = None
@@ -506,6 +645,18 @@ def fill_missing_metadata(
 
 
 def find_best_audio_codec(audio_codecs: Iterable[str] | None) -> str:
+    """
+    Select the highest-quality audio codec from a list.
+
+    Priority order (highest first):
+    TrueHD > DTS-X > Atmos > DTS > FLAC > DDP > DD > AC3 > AAC.
+
+    Args:
+        audio_codecs: Iterable of audio codec strings (may be None).
+
+    Returns:
+        The best single codec string, or a comma-joined fallback.
+    """
     if not audio_codecs:
         return ""
     # Return the best audio codec if we have multiple
@@ -582,49 +733,42 @@ def rename_files(
     """
     ren_count = 0
 
-    for show_data in organized.values():
-        seasons = show_data["seasons"]
-        for season_files in seasons.values():
-            for episode_files in season_files.values():
-                if not episode_files:
-                    continue
+    def process_episode(
+        show_name: str,
+        show_data: ShowData,
+        season: str,
+        episode: str,
+        episode_files: dict[str, FileDefinition],
+    ):
+        nonlocal ren_count
+        if not has_video_file(episode_files):
+            logger.debug(f"Skipping episode with no video file")
+            return
 
-                # Get all files for this episode
-                all_files = episode_files.values()
+        # Fill missing metadata from primary video
+        all_files = get_all_episode_files(episode_files)
+        fill_missing_metadata(all_files, force_use_media_info)
 
-                # Check if there's at least one video file
-                has_video = any(not f.is_subtitle for f in all_files)
-                if not has_video:
-                    logger.debug(f"Skipping episode with no video file")
-                    continue
+        # Rename each file
+        for file_def in all_files:
+            logger.debug(f"Processing file: {file_def.filename}")
+            new_filename = build_new_filename(file_def, include_language, style)
+            logger.debug(
+                f"Generated new filename: {new_filename} for {file_def.filename}"
+            )
+            new_path = os.path.join(file_def.folder, new_filename)
 
-                # Fill missing metadata from primary video
-                fill_missing_metadata(all_files, force_use_media_info)
+            if new_path != file_def.filename:
+                logger.info(f"Rename: {Path(file_def.filename).name} -> {new_filename}")
+                ren_count += 1
 
-                # Rename each file
-                for file_def in all_files:
-                    logger.debug(f"Processing file: {file_def.filename}")
-                    new_filename = build_new_filename(file_def, include_language, style)
-                    logger.debug(
-                        f"Generated new filename: {new_filename} for"
-                        f" {file_def.filename}"
-                    )
-                    new_path = os.path.join(file_def.folder, new_filename)
+                if not dry_run:
+                    try:
+                        os.rename(file_def.filename, new_path)
+                    except OSError as e:
+                        logger.error(f"Failed to rename {file_def.filename}: {e}")
 
-                    if new_path != file_def.filename:
-                        logger.info(
-                            f"Rename: {Path(file_def.filename).name} -> {new_filename}"
-                        )
-                        ren_count += 1
-
-                        if not dry_run:
-                            try:
-                                os.rename(file_def.filename, new_path)
-                            except OSError as e:
-                                logger.error(
-                                    f"Failed to rename {file_def.filename}: {e}"
-                                )
-
+    apply_to_all_episodes(organized, process_episode)
     return ren_count
 
 
@@ -633,24 +777,32 @@ def check_missing(
     episode_name_index: dict[str, str],
 ):
     """
-    Check for missing episodes based on organized files.
+    Check for missing episodes by comparing organized files against an episode index.
 
-    Returns:
-        list of missing episode identifiers (e.g., "S01E02")
+    Logs the show name and any episodes present in the index but absent from
+    the organized structure.
+
+    Args:
+        organized: FileOrganization structure from organize_files().
+        episode_name_index: Dict from load_episode_name_index() with expected episodes.
     """
     missing: set[str] = episode_name_index.keys() - set(["name"])
-    for show_name, show_data in organized.items():
-        if "seasons" not in show_data:
-            continue
 
-        seasons = show_data["seasons"]
-        for season, episodes in seasons.items():
-            for episode, episode_files in episodes.items():
-                for file_def in episode_files.values():
-                    if not file_def.is_subtitle:
-                        key = f"{season}|{episode}"
-                        missing.discard(key)
+    def process_episode(
+        show_name: str,
+        show_data: ShowData,
+        season: str,
+        episode: str,
+        episode_files: dict[str, FileDefinition],
+    ):
+        for file_def in get_all_episode_files(episode_files):
+            if not file_def.is_subtitle:
+                key = build_season_episode_key(season, episode)
+                missing.discard(key)
 
+    apply_to_all_episodes(organized, process_episode)
+
+    for show_name in organized.keys():
         logger.info(f"Show Name: {show_name}")
         if missing:
             logger.info(f"Missing episodes: {sorted(missing)}")
@@ -663,23 +815,34 @@ def check_low_resolution(
     resolution_threshold: int = 1080,
 ):
     """
-    Check for episodes with low resolution based on organized files.
+    Check for episodes with resolution below a given threshold.
 
-    Returns:
-        list of missing episode identifiers (e.g., "S01E02")
+    Logs the show name and any episodes whose resolution is lower than the
+    threshold (default: 1080p).
+
+    Args:
+        organized: FileOrganization structure from organize_files().
+        resolution_threshold: Minimum acceptable vertical resolution (e.g., 1080).
     """
     low_res: dict[str, str] = {}
-    for show_name, show_data in organized.items():
-        seasons = show_data["seasons"]
-        for season, episodes in sorted(seasons.items()):
-            for episode, episode_files in episodes.items():
-                for file_def in episode_files.values():
-                    if not file_def.is_subtitle:
-                        key = f"{season}|{episode}"
-                        res = file_def.parsed.resolution
-                        if res and int(res[:-1]) < resolution_threshold:
-                            low_res[key] = res
 
+    def process_episode(
+        show_name: str,
+        show_data: ShowData,
+        season: str,
+        episode: str,
+        episode_files: dict[str, FileDefinition],
+    ):
+        for file_def in get_all_episode_files(episode_files):
+            if not file_def.is_subtitle:
+                key = build_season_episode_key(season, episode)
+                res = file_def.parsed.resolution
+                if res and int(res[:-1]) < resolution_threshold:
+                    low_res[key] = res
+
+    apply_to_all_episodes(organized, process_episode)
+
+    for show_name in organized.keys():
         logger.info(f"Show Name: {show_name}")
         if low_res:
             logger.info(f"Episodes with low resolution: {low_res}")
@@ -689,35 +852,45 @@ def check_low_resolution(
 
 def list_files(organized: FileOrganization, is_show: bool = True, to_csv: bool = False):
     """
-    List all files in the organized structure.
+    List all media files in the organized structure as a table.
+
+    Outputs to the console (via pandas DataFrame) or to ``videos.csv``.
 
     Args:
-        organized: FileOrganization structure from organize_files()
+        organized: FileOrganization structure from organize_files().
+        is_show: If True, include season/episode/title columns; otherwise year.
+        to_csv: If True, write output to ``videos.csv`` instead of printing.
     """
     data: list[list[str]] = []
-    for show_name, show_data in organized.items():
-        seasons = show_data["seasons"]
-        for season, episodes in seasons.items():
-            for episode, episode_files in episodes.items():
-                for file_def in episode_files.values():
-                    if not file_def.is_media:
-                        continue
-                    parsed = file_def.parsed
-                    l = [show_name]
-                    if is_show:
-                        l += [season, episode, parsed.title]
-                    else:
-                        l += [parsed.year]
-                    l += [
-                        parsed.resolution,
-                        parsed.source,
-                        parsed.package,
-                        parsed.codec,
-                        parsed.hdr,
-                        " / ".join(parsed.audio_codecs) if parsed.audio_codecs else "",
-                        parsed.release_group,
-                    ]
-                    data.append(l)
+
+    def process_episode(
+        show_name: str,
+        show_data: ShowData,
+        season: str,
+        episode: str,
+        episode_files: dict[str, FileDefinition],
+    ):
+        for file_def in get_all_episode_files(episode_files):
+            if not file_def.is_media:
+                continue
+            parsed = file_def.parsed
+            l = [show_name]
+            if is_show:
+                l += [season, episode, parsed.title]
+            else:
+                l += [parsed.year]
+            l += [
+                parsed.resolution,
+                parsed.source,
+                parsed.package,
+                parsed.codec,
+                parsed.hdr,
+                " / ".join(parsed.audio_codecs) if parsed.audio_codecs else "",
+                parsed.release_group,
+            ]
+            data.append(l)
+
+    apply_to_all_episodes(organized, process_episode)
 
     if is_show:
         columns = ["Show Name", "Season", "Episode", "Title"]
@@ -776,31 +949,11 @@ def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> 
             fetch_title_and_ids_for_show(folder, {show_name: show_data})
 
         # Get identifier from the first video file
-        identifier = ""
-        year = ""
-        updated_show_name = show_name
-        seasons = show_data.get("seasons", {})
-        for season_episodes in seasons.values():
-            for episode_files in season_episodes.values():
-                for file_def in episode_files.values():
-                    if not file_def.is_subtitle:
-                        if file_def.parsed.imdb_id:
-                            identifier = f"{{imdb-{file_def.parsed.imdb_id}}}"
-                        elif file_def.parsed.tmdb_id:
-                            identifier = f"{{tmdb-{file_def.parsed.tmdb_id}}}"
-                        year = file_def.parsed.year
-                        # Also get updated show name from parsed title if available
-                        if file_def.parsed.title and fetch_tmdb:
-                            updated_show_name = file_def.parsed.title
-                        break
-                if identifier and year:
-                    break
-            if identifier and year:
-                break
+        identifier, year, _ = extract_identifier_from_organized(show_data, show_name)
 
         # Build new folder name
         if identifier:
-            new_folder_name = f"{updated_show_name} ({year}) {identifier}"
+            new_folder_name = f"{show_name} ({year}) {identifier}"
         else:
             logger.debug(
                 f"No identifier found for show: {show_name}, skipping normalization"
@@ -833,10 +986,11 @@ def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> 
         except OSError as e:
             logger.error(f"Failed to rename folder {folder}: {e}")
 
+        # Update folder path in all FileDefinitions
+        seasons = show_data.get("seasons", {})
         for season_episodes in seasons.values():
             for episode_files in season_episodes.values():
-                for file_def in episode_files.values():
-                    # Update the folder path in each FileDefinition
+                for file_def in get_all_episode_files(episode_files):
                     file_def.folder = new_folder_path
 
     return normalized_count
