@@ -142,6 +142,19 @@ def main():
         action="store_true",
         help="Force use media info to rename files",
     )
+    parser.add_argument(
+        "--normalize-folders",
+        action="store_true",
+        help="Normalize folder names to 'Show Name {identifier}' format",
+    )
+    parser.add_argument(
+        "--fetch-tmdb-for-normalize",
+        action="store_true",
+        help=(
+            "Fetch show info from TMDB when normalizing folders to enrich identifiers"
+            " and titles"
+        ),
+    )
     args = parser.parse_args()
 
     # Setup logging globally for all modules
@@ -204,6 +217,21 @@ def main():
             dry_run = True
         else:
             dry_run = args.dry_run
+
+        # Normalize folders if requested and not in dry_run mode
+        if args.normalize_folders and not dry_run:
+            from organizer import normalize_folders
+
+            normalized_count = normalize_folders(
+                organized, fetch_tmdb=args.fetch_tmdb_for_normalize
+            )
+            if normalized_count:
+                logger.info(f"{normalized_count} folders have been normalized")
+            else:
+                logger.info("All folders are already normalized")
+        elif args.normalize_folders and dry_run:
+            logger.info("DRY RUN MODE - Folder normalization skipped")
+            logger.info("Use --commit or -c to actually normalize folders")
 
         # Rename files
         include_language = not args.no_language

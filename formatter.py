@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 from config import (
     AUDIO_CODECS,
     CODECS,
+    EXTRA,
     HDR,
     HDR_RENAME_MAPPING,
     LANGUAGES,
@@ -144,6 +145,14 @@ def format_known(
     return value
 
 
+def normalize_illegal_chars(text: str) -> str:
+    illegal_chars = ",?!\\/:"
+    for char in illegal_chars:
+        text = text.replace(char, "")
+    text = text.replace("*", "-")
+    return text
+
+
 def build_filename(
     style: int,
     show_name: str,
@@ -151,6 +160,8 @@ def build_filename(
     episode: str,
     title: str,
     year: str = "",
+    identifier: str = "",
+    edition: str = "",
     resolution: str = "",
     codec: str = "",
     hdr: str = "",
@@ -158,7 +169,7 @@ def build_filename(
     package: str = "",
     audio_codec: str = "",
     lang: str = "",
-    extra: str = "",
+    extras: list[str] | None = None,
     release_group: str = "",
 ) -> str:
     """
@@ -191,8 +202,10 @@ def build_filename(
         format_known(hdr, HDR, HDR_RENAME_MAPPING, style=style),
         format_known(audio_codec, AUDIO_CODECS, style=style),
         format_known(lang, LANGUAGES, style=style),
-        extra,
     ]
+    if extras:
+        for extra in extras:
+            metas.append(format_known(extra, EXTRA, style=style))
     metas = [p for p in metas if p]
 
     if style == 1:
@@ -200,6 +213,8 @@ def build_filename(
         if season and episode:
             # show
             parts.append(f"S{season}E{episode}")
+            if identifier:
+                parts.append(identifier)
             if title:
                 parts.append(format_title(title, style))
         else:
@@ -214,15 +229,23 @@ def build_filename(
         if season and episode:
             # show
             filename += f" S{season}E{episode}"
+            if identifier:
+                filename += f" {identifier}"
+            filename += " - "
             if title:
-                filename += f" - {format_title(title, 2)}"
+                filename += f"{format_title(title, 2)}"
         else:
             # movie
             if year:
                 filename += f" ({year})"
+            if identifier:
+                filename += f" {identifier}"
+            filename += " - "
+            if edition:
+                filename += f"{edition.replace('.', ' ')} "
 
         if metas:
-            filename += f" {''.join(f'[{part}]' for part in metas)}"
+            filename += f"{''.join(f'[{part}]' for part in metas)}"
     else:
         raise ValueError("Unknown style")
 
@@ -230,4 +253,4 @@ def build_filename(
     if release_group:
         filename = f"{filename}-{release_group}"
 
-    return filename
+    return normalize_illegal_chars(filename)

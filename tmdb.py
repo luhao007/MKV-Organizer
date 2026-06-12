@@ -1,5 +1,6 @@
 """Fetch episode names from The Movie Database (TMDB)."""
 
+import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -468,6 +469,14 @@ def parse_tvshow_nfo(nfo_path: str) -> Optional[dict[str, str]]:
         if tmdb_elem is not None and tmdb_elem.text:
             result["tmdb_id"] = tmdb_elem.text
 
+        title_elem = root.find("originaltitle")
+        if title_elem is not None and title_elem.text:
+            result["original_title"] = title_elem.text
+
+        year_elem = root.find("year")
+        if year_elem is not None and year_elem.text:
+            result["year"] = year_elem.text
+
         if result:
             logger.info(f"Parsed tvshow.nfo: {result}")
             return result
@@ -475,6 +484,47 @@ def parse_tvshow_nfo(nfo_path: str) -> Optional[dict[str, str]]:
         return None
     except Exception as e:
         logger.error(f"Error parsing tvshow.nfo: {e}")
+        return None
+
+
+def parse_movie_info(nfo_path: str) -> Optional[dict[str, str]]:
+    """
+    Parse movie info XML file to extract IDs.
+
+    Returns:
+        Dict with 'imdb_id' and/or 'tmdb_id' keys, or None if parsing fails.
+    """
+    try:
+        tree = ET.parse(nfo_path)
+        root = tree.getroot()
+
+        result: dict[str, str] = {}
+
+        # Try to find imdb_id
+        imdb_elem = root.find("imdbid")
+        if imdb_elem is not None and imdb_elem.text:
+            result["imdb_id"] = imdb_elem.text
+
+        # Try to find tmdbid
+        tmdb_elem = root.find("tmdbid")
+        if tmdb_elem is not None and tmdb_elem.text:
+            result["tmdb_id"] = tmdb_elem.text
+
+        title_elem = root.find("originaltitle")
+        if title_elem is not None and title_elem.text:
+            result["original_title"] = title_elem.text
+
+        year_elem = root.find("year")
+        if year_elem is not None and year_elem.text:
+            result["year"] = year_elem.text
+
+        if result:
+            logger.info(f"Parsed movie info: {result}")
+            return result
+
+        return None
+    except Exception as e:
+        logger.error(f"Error parsing movie info: {e}")
         return None
 
 
@@ -525,6 +575,94 @@ def _get_show_info_by_imdb_id(api_key: str, imdb_id: str) -> Optional[dict[str, 
     except Exception as e:
         logger.error(f"Error fetching show info for IMDB ID {imdb_id}: {e}")
         return None
+
+
+def fetch_title_by_tmdb_id(api_key: str, tmdb_show_id: int) -> Optional[str]:
+    """Fetch show title from TMDB using TMDB ID."""
+    show_info = _get_show_info_by_tmdb_id(api_key, tmdb_show_id)
+    if show_info:
+        return show_info.get("name")
+    return None
+
+
+def fetch_title_and_ids_for_show(
+    show_folder: str, organized: FileOrganization
+) -> Optional[tuple[str, str, str]]:
+    """
+    Fetch show title and IMDB ID and TMDB ID for a show folder.
+
+    Returns:
+        Tuple of (show_title, imdb_id, tmdb_id) if found, otherwise None.
+    """
+    if not organized:
+        return None
+
+    api_key = _get_api_key()
+
+    # Get show name from organized dict
+    show_names = list(organized.keys())
+    if not show_names:
+        logger.warning("No shows found in organized data")
+        return None
+
+    for show_name, show_data in organized.items():
+        logger.info(f"Fetching show info for: {show_name}")
+
+        imdb_id = None
+        tmdb_id = None
+        title = None
+        year = None
+
+        tvshow_nfo_path = Path(show_folder) / "tvshow.nfo"
+        movie_nfo_path = Path(show_folder) / "movie.nfo"
+
+        nfo_data = None
+        if os.path.exists(tvshow_nfo_path):
+            nfo_data = parse_tvshow_nfo(str(tvshow_nfo_path))
+        elif os.path.exists(movie_nfo_path):
+            nfo_data = parse_movie_info(str(movie_nfo_path))
+
+        if nfo_data:
+            title = nfo_data["original_title"]
+            tmdb_id = nfo_data["tmdb_id"]
+            imdb_id = nfo_data["imdb_id"]
+            year = nfo_data["year"]
+
+        else:
+            id_info = extract_id_from_folder_name(show_folder)
+            if id_info:
+                id_type, id_value = id_info
+                logger.info(f"Found {id_type} ID in folder name: {id_value}")
+
+                show_info = None
+                if id_type == "tmdb":
+                    show_info = _get_show_info_by_tmdb_id(api_key, int(id_value))
+                    tmdb_id = id_value
+
+                elif id_type == "imdb":
+                    show_info = _get_show_info_by_imdb_id(api_key, id_value)
+
+                if show_info:
+                    tmdb_id = show_info["id"]
+                    show_name = show_info.get("name", show_name)
+                    imdb_id = show_info.get("imdb_id", None)
+                    year = show_info.get("year", None)
+
+        if (imdb_id or tmdb_id) and title:
+            for seasons in show_data["seasons"].values():
+                for episodes in seasons.values():
+                    for file_def in episodes.values():
+                        if imdb_id:
+                            file_def.parsed.imdb_id = imdb_id
+                        if tmdb_id:
+                            file_def.parsed.tmdb_id = int(tmdb_id)
+                        file_def.parsed.show_name = show_name
+                        if os.path.exists(movie_nfo_path):
+                            file_def.parsed.show_name = title
+                        else:
+                            file_def.parsed.title = title
+                        if year:
+                            file_def.parsed.year = year
 
 
 def fetch_episode_names_for_show(

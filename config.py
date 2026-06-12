@@ -67,8 +67,10 @@ _WEB_SOURCES: Final = [
 SOURCES: Final = [
     "HDTV",
     "TVRip",
+    "WEBDL",
     "WEB.DL",
     "WEB-DL",
+    "WEB_DL",
     "WEBRip",
     "UHD.BluRay",
     "BluRay",
@@ -84,6 +86,7 @@ SOURCES: Final = [
 )
 SOURCE_RENAME_MAPPINGS: Final = {
     "WEB.DL": "WEB-DL",
+    "WEBDL": "WEB-DL",
     "WEBRip": "WEB-DL",
     "WEBDL": "WEB-DL",
     "UHD.BluRay": "BluRay",
@@ -127,6 +130,16 @@ AUDIO_CODECS: Final = (
     + list(map("".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
 )
 
+EDITIONS: Final = [
+    "IMAX",
+    "Directors.Cut",
+    "Extended.Cut",
+    "Extended.Cut.IMAX",
+]
+
+EXTRA: Final = ["IMAX.Enhanced"]
+
+
 # Default filename for stored episode title mappings.
 EPISODE_NAME_FILE: Final = "episode_names.txt"
 
@@ -158,6 +171,14 @@ SEASON_EPISODE_PATTERN: Final = re.compile(
 
 # Match resolution (e.g., 1080p, 720p, 2160p)
 RESOLUTION_PATTERN: Final = re.compile(r"(?i)(?<!\d)(?P<res>\d{3,4}p)(?!\d)")
+
+EDITION_PATTERN: Final = re.compile(
+    r"(?i)(?P<edition>\{edition-(" + "|".join(map(re.escape, EDITIONS)) + r")\})"
+)
+
+IDENTIFIER_PATTERN: Final = re.compile(
+    r"(?i)(?P<id>\{(im|tm)db-(tt\d{7,8}|nm\d{7,8}|tv\d{7,8})\})"
+)
 
 # For capitalization - split on dots, spaces, underscores
 WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_]+")

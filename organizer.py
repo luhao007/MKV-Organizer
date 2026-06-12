@@ -2,7 +2,7 @@
 
 import os
 import traceback
-from formatter import build_filename
+from formatter import build_filename, normalize_illegal_chars
 from parser import parse_filename
 from pathlib import Path
 from typing import Iterable, Optional
@@ -529,6 +529,12 @@ def build_new_filename(
     For subtitles, appends language code: "Show.S01E01.Title.chs.srt"
     """
     parsed = file_def.parsed
+    if parsed.imdb_id:
+        identifier = f"{{imdb-{parsed.imdb_id}}}"
+    elif parsed.tmdb_id:
+        identifier = f"{{tmdb-{parsed.tmdb_id}}}"
+    else:
+        identifier = ""
 
     # Build base filename
     base = build_filename(
@@ -538,6 +544,8 @@ def build_new_filename(
         episode=parsed.episode,
         title=parsed.title,
         year=parsed.year,
+        edition=parsed.edition,
+        identifier=identifier,
         resolution=parsed.resolution,
         source=parsed.source,
         package=parsed.package,
@@ -545,7 +553,7 @@ def build_new_filename(
         hdr=parsed.hdr,
         audio_codec=find_best_audio_codec(parsed.audio_codecs),
         lang=parsed.lang if include_language and not file_def.is_subtitle else "",
-        extra=parsed.extra,
+        extras=parsed.extras,
         release_group=parsed.release_group,
     )
 
@@ -739,3 +747,96 @@ def list_files(organized: FileOrganization, is_show: bool = True, to_csv: bool =
 
         df = DataFrame(data, columns=columns)
         print(df)
+
+
+def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> int:
+    """
+    Normalize folder names to "Show Name {identifier}" format.
+
+    Args:
+        organized: FileOrganization structure from organize_files()
+        fetch_tmdb: If True, fetch show info from TMDB to enrich identifiers and titles
+
+    Returns:
+        Number of folders that were renamed
+    """
+    normalized_count = 0
+
+    for show_name, show_data in organized.items():
+        folder = show_data.get("folder")
+        if not folder:
+            logger.debug(f"No folder found for show: {show_name}")
+            continue
+
+        # Fetch TMDB info if requested to enrich identifiers and titles
+        if fetch_tmdb:
+            from tmdb import fetch_title_and_ids_for_show
+
+            logger.info(f"Fetching TMDB info for {show_name}")
+            fetch_title_and_ids_for_show(folder, {show_name: show_data})
+
+        # Get identifier from the first video file
+        identifier = ""
+        year = ""
+        updated_show_name = show_name
+        seasons = show_data.get("seasons", {})
+        for season_episodes in seasons.values():
+            for episode_files in season_episodes.values():
+                for file_def in episode_files.values():
+                    if not file_def.is_subtitle:
+                        if file_def.parsed.imdb_id:
+                            identifier = f"{{imdb-{file_def.parsed.imdb_id}}}"
+                        elif file_def.parsed.tmdb_id:
+                            identifier = f"{{tmdb-{file_def.parsed.tmdb_id}}}"
+                        year = file_def.parsed.year
+                        # Also get updated show name from parsed title if available
+                        if file_def.parsed.title and fetch_tmdb:
+                            updated_show_name = file_def.parsed.title
+                        break
+                if identifier and year:
+                    break
+            if identifier and year:
+                break
+
+        # Build new folder name
+        if identifier:
+            new_folder_name = f"{updated_show_name} ({year}) {identifier}"
+        else:
+            logger.debug(
+                f"No identifier found for show: {show_name}, skipping normalization"
+            )
+            continue
+
+        new_folder_name = normalize_illegal_chars(new_folder_name)
+
+        # Create normalized folder path
+        parent_folder = str(Path(folder).parent)
+        new_folder_path = os.path.join(parent_folder, new_folder_name)
+
+        # Check if the folder already has the correct name
+        if os.path.normpath(folder) == os.path.normpath(new_folder_path):
+            logger.debug(f"Folder already normalized: {folder}")
+            continue
+
+        # Check if the new folder already exists
+        if os.path.exists(new_folder_path):
+            logger.warning(f"Target folder already exists: {new_folder_path}, skipping")
+            continue
+
+        # Rename the folder
+        try:
+            logger.info(f"Normalize folder: {Path(folder).name} -> {new_folder_name}")
+            os.rename(folder, new_folder_path)
+            normalized_count += 1
+            # Update the folder path in the show_data
+            show_data["folder"] = new_folder_path
+        except OSError as e:
+            logger.error(f"Failed to rename folder {folder}: {e}")
+
+        for season_episodes in seasons.values():
+            for episode_files in season_episodes.values():
+                for file_def in episode_files.values():
+                    # Update the folder path in each FileDefinition
+                    file_def.folder = new_folder_path
+
+    return normalized_count

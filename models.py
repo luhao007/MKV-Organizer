@@ -17,19 +17,21 @@ class ParsedFileInfo:
     # Media infos
     resolution: str = ""
     codec: str = ""  # x264, x265, AV1, etc.
-    source: str = ""  # e.g., WEB-DL, HDTV
-    package: str = ""  # e.g., PROPER, REPACK
     hdr: str = ""  # e.g., HDR, 10bit, DV
     audio_codecs: list[str] | None = None  # e.g., DD5.1, DTS-HD.MA
-    lang: str = ""  # e.g., chs, eng
-    extra: str = ""  # Any extra info that doesn't fit into other fields
-    release_group: str = ""
-    extension: str = ""
-    original_filename: str = ""
 
     # Extra info:
+    edition: str = ""  # e.g., Director's Cut, Extended Edition
+    source: str = ""  # e.g., WEB-DL, HDTV
+    package: str = ""  # e.g., PROPER, REPACK
     year: str = ""  # For movies/shows, extracted year
     tmdb_id: int = 0  # TMDB show ID from API lookup
+    lang: str = ""  # e.g., chs, eng
+    extras: list[str] | None = None  # Any extra info that doesn't fit into other fields
+    imdb_id: str = ""  # IMDb ID from API lookup
+    release_group: str = ""
+    original_filename: str = ""
+    extension: str = ""
 
 
 @dataclass

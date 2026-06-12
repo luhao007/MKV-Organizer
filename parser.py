@@ -7,7 +7,10 @@ from typing import Iterable, Optional
 from config import (
     AUDIO_CODECS,
     CODECS,
+    EDITION_PATTERN,
+    EXTRA,
     HDR,
+    IDENTIFIER_PATTERN,
     LANGUAGES,
     PACKAGE,
     RELEASE_GROUP_PATTERN,
@@ -221,6 +224,17 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     show_name = normalize_separators(show_name)
 
     # Extract resolution, codec, source, audio codec, language
+    identifier, unparsed = extract_through_pattern(IDENTIFIER_PATTERN, unparsed)
+    imdb_id = ""
+    tmdb_id = ""
+    if identifier.startswith("{imdb-"):
+        imdb_id = identifier[6:-1]  # Extract IMDb ID from {imdb-tt1234567}
+        tmdb_id = ""
+    elif identifier.startswith("{tmdb-"):
+        tmdb_id = identifier[6:-1]  # Extract TMDB ID from {tmdb-tv1234567}
+        imdb_id = ""
+
+    edition, unparsed = extract_through_pattern(EDITION_PATTERN, unparsed)
     resolution, unparsed = extract_through_pattern(RESOLUTION_PATTERN, unparsed)
     codec, unparsed = extract_through_known_lists(CODECS, unparsed)
     source, unparsed = extract_through_known_lists(SOURCES, unparsed)
@@ -231,6 +245,7 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     audio_codecs, unparsed = extract_through_known_lists_repeated(
         AUDIO_CODECS, unparsed
     )
+    extras, unparsed = extract_through_known_lists_repeated(EXTRA, unparsed)
 
     if extension not in SUBTITLE_FORMATS:
         lang, unparsed = extract_through_known_lists_repeated(LANGUAGES, unparsed)
@@ -244,8 +259,8 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
     logger.debug(
         f"Extracted: show={show_name}, title={title}, resolution={resolution},"
         f" codec={codec}, source={source}, package={package}, hdr={hdr},"
-        f" audio_codecs={audio_codecs}, lang={lang}, extra={unparsed},"
-        f" extension={extension}, release_group={release_group}"
+        f" audio_codecs={audio_codecs}, lang={lang}, extras={extras},"
+        f" extension={extension}, release_group={release_group}, edition={edition}"
     )
 
     return ParsedFileInfo(
@@ -260,9 +275,12 @@ def parse_filename(filename: str, is_show: bool = True) -> ParsedFileInfo:
         hdr=hdr,
         audio_codecs=audio_codecs,
         lang=lang,
-        extra=unparsed,
+        extras=extras,
         release_group=release_group or "",
         extension=extension,
         original_filename=filename,
         year=year,
+        edition=edition,
+        imdb_id=imdb_id,
+        tmdb_id=int(tmdb_id) if tmdb_id else 0,
     )
