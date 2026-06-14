@@ -42,6 +42,10 @@ class TestCapitalizeWord:
     def test_empty_word(self):
         assert capitalize_word("") == ""
 
+    def test_word_with_hyphen(self):
+        result = capitalize_word("call-of-duty", is_first=False)
+        assert result == "Call-of-Duty"
+
 
 # ============================================================================
 # format_title

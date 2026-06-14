@@ -38,6 +38,13 @@ def capitalize_word(word: str, is_first: bool = False) -> str:
     if not word:
         return ""
 
+    # Handle words with hyphens (e.g. "call-of-duty")
+    if "-" in word:
+        return "-".join(
+            capitalize_word(part, is_first=(i == 0) and is_first)
+            for i, part in enumerate(word.split("-"))
+        )
+
     # Extract core word from brackets/parentheses
     match = WRAP_PATTERN.match(word)
     if not match:
