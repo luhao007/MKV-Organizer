@@ -13,6 +13,7 @@ from config import (
     PACKAGE,
     SOURCE_RENAME_MAPPINGS,
     SOURCES,
+    SPECIALWORDS,
     STOPWORDS,
     WORD_SPLIT_PATTERN,
     WRAP_PATTERN,
@@ -61,6 +62,10 @@ def capitalize_word(word: str, is_first: bool = False) -> str:
     # Apply stopword rules
     if not is_first and core_lower in STOPWORDS:
         return prefix + core_lower + suffix
+
+    for special in SPECIALWORDS:
+        if core_lower == special.lower():
+            return prefix + special + suffix
 
     # Preserve acronyms and tokens containing digits (e.g. HDTV, DD5.1)
     if core.isupper() or any(char.isdigit() for char in core):
@@ -275,12 +280,12 @@ def build_filename(
         filename = format_title(show_name, 2)
         if season and episode:
             # show
-            filename += f" S{season}E{episode}"
             if identifier:
                 filename += f" {identifier}"
+            filename += f" S{season}E{episode}"
             filename += " - "
             if title:
-                filename += f"{format_title(title, 2)}"
+                filename += f"{format_title(title, 2)} "
         else:
             # movie
             if year:

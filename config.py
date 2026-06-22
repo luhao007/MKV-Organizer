@@ -122,6 +122,8 @@ _AUDIO_CODECS_WITH_CHANNELS = [
     "TrueHD",
     "TrueHD.Atmos",
     "DTS-X",
+    "AAC",
+    "Opus",
 ]
 _CHANNELS = ["2.0", "5.1", "7.1"]
 AUDIO_CODECS: Final = (
@@ -154,6 +156,7 @@ META_FILES: Final = [
     "season.nfo",
     EPISODE_NAME_FILE,
     "poster.jpg",
+    "Thumbs.db",
 ]
 
 # Regex Patterns
@@ -188,6 +191,21 @@ WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")
 
 # Stopwords for title capitalization (keep lowercase except first word)
 STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
+
+# Some special words that should not be captalized
+SPECIALWORDS: Final = [
+    "I",
+    "II",
+    "III",
+    "IV",
+    "V",
+    "VI",
+    "VII",
+    "VIII",
+    "IX",
+    "X",
+    "WandaVision",
+]
 
 # TODO: Metadata suffixes that are not part of the episode title, and
 # not handled by our parser yet.

@@ -636,12 +636,15 @@ def fill_missing_metadata(
         file_def.parsed.year = primary.parsed.year
         file_def.parsed.title = primary.parsed.title
         file_def.parsed.resolution = primary.parsed.resolution
-        file_def.parsed.source = primary.parsed.source
-        file_def.parsed.codec = primary.parsed.codec
-        file_def.parsed.package = primary.parsed.package
-        file_def.parsed.audio_codecs = primary.parsed.audio_codecs
         file_def.parsed.hdr = primary.parsed.hdr
+        file_def.parsed.codec = primary.parsed.codec
+        file_def.parsed.audio_codecs = primary.parsed.audio_codecs
+        file_def.parsed.edition = primary.parsed.edition
+        file_def.parsed.source = primary.parsed.source
+        file_def.parsed.package = primary.parsed.package
         file_def.parsed.release_group = primary.parsed.release_group
+        file_def.parsed.imdb_id = primary.parsed.imdb_id
+        file_def.parsed.tmdb_id = primary.parsed.tmdb_id
 
 
 def find_best_audio_codec(audio_codecs: Iterable[str] | None) -> str:
