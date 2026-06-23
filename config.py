@@ -111,25 +111,11 @@ _AUDIO_CODECS = [
     "MP2",
     "Opus",
 ]
-_AUDIO_CODECS_WITH_CHANNELS = [
-    "DD",
-    "AC3",
-    "DDP",
-    "DDPA",
-    "EAC3",
-    "EAC3.Atmos",
-    "DDP.Atmos",
-    "TrueHD",
-    "TrueHD.Atmos",
-    "DTS-X",
-    "AAC",
-    "Opus",
-]
 _CHANNELS = ["2.0", "5.1", "7.1"]
 AUDIO_CODECS: Final = (
     _AUDIO_CODECS
-    + list(map(".".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
-    + list(map("".join, itertools.product(_AUDIO_CODECS_WITH_CHANNELS, _CHANNELS)))
+    + list(map(".".join, itertools.product(_AUDIO_CODECS, _CHANNELS)))
+    + list(map("".join, itertools.product(_AUDIO_CODECS, _CHANNELS)))
 )
 
 EDITIONS: Final = [
