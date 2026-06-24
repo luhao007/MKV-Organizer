@@ -472,10 +472,12 @@ def organize_files(
                         organized[show_name]["seasons"].update(show_data["seasons"])
             continue
 
-        if "." not in filename:
-            logger.debug(f"Skipping file with no extension: {filename}")
-            continue
-        if any(filename.endswith(meta) for meta in META_FILES):
+        if (
+            "." not in filename
+            or filename.startswith(".")
+            or any(filename.endswith(meta) for meta in META_FILES)
+        ):
+            logger.debug(f"Skipping meta file {filename}")
             continue
         ext = os.path.splitext(filename)[1][1:].lower()  # get extension without dot
 
@@ -715,6 +717,8 @@ def build_new_filename(
         return f"{base}-thumb.jpg"
     elif file_def.is_subtitle and parsed.lang:
         return f"{base}.{parsed.lang}.{parsed.extension}"
+    elif parsed.extension in ["op", "ed"]:
+        return f".{base}.fg.{parsed.extension}"
     else:
         return f"{base}.{parsed.extension}"
 

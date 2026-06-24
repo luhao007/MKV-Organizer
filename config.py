@@ -103,6 +103,8 @@ _AUDIO_CODECS = [
     "DTS-X",
     "DDP.Atmos",
     "DDP",
+    "EAC3.Atmos",
+    "EAC3",
     "DD",
     "AC3",
     "FLAC",
