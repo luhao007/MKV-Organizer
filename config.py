@@ -134,6 +134,7 @@ EXTRA: Final = ["IMAX.Enhanced"]
 EPISODE_NAME_FILE: Final = "episode_names.txt"
 
 META_FILES: Final = [
+    "banner.jpg",
     "backdrop.jpg",
     "folder.jpg",
     "landscape.jpg",

@@ -3,7 +3,7 @@
 import os
 import re
 import traceback
-from typing import Optional
+from typing import Final, Optional
 
 from pymediainfo import MediaInfo, Track
 
@@ -21,6 +21,16 @@ HEIGHT_TO_RESOLUTION = {
     480: "480p",
     320: "320p",
     240: "240p",
+}
+# Some video have black bar cut-off, ends up in shrinked height
+# So use width to determine resolution
+WIDTH_TO_RESOLUTION: Final = {
+    3840: "2160p",
+    1920: "1080p",
+    1280: "720p",
+    720: "480p",
+    480: "320p",
+    320: "240p",
 }
 
 
@@ -133,21 +143,26 @@ def _get_tracks(media_info: MediaInfo, track_type: str) -> list[Track]:
 # ============================================================================
 
 
-def get_resolution_from_height(height: int) -> str:
+def get_resolution_from_size(height: int, width: int | None = None) -> str:
     """
     Convert video height to resolution string.
 
     Args:
         height: Video height in pixels
+        width: Video width in pixels
 
     Returns:
         Resolution string (e.g., "1080p")
     """
     if height in HEIGHT_TO_RESOLUTION:
         return HEIGHT_TO_RESOLUTION[height]
+    if width in WIDTH_TO_RESOLUTION:
+        return WIDTH_TO_RESOLUTION[width]
 
     # Intelligent guessing for non-standard heights
-    logger.debug(f"Height {height} not in standard mapping, applying guessing")
+    logger.debug(
+        f"Height {height} and width {width} not in standard mapping,applying guessing"
+    )
     if height >= 2100:
         return "2160p"
     elif height >= 1000:
@@ -171,6 +186,27 @@ def extract_height(video_track: Track) -> Optional[int]:
     MediaInfo may store height as 'height', 'sampled_height', or other fields.
     """
     for attr in ["height", "sampled_height"]:
+        value = getattr(video_track, attr, None)
+        if value is None:
+            continue
+
+        # Convert to int if string
+        if isinstance(value, str):
+            if value.isdigit():
+                return int(value)
+        elif isinstance(value, (int, float)):
+            return int(value)
+
+    return None
+
+
+def extract_width(video_track: Track) -> Optional[int]:
+    """
+    Extract video width from MediaInfo track.
+
+    MediaInfo may store width as 'width', 'sampled_width', or other fields.
+    """
+    for attr in ["width", "sampled_width"]:
         value = getattr(video_track, attr, None)
         if value is None:
             continue
@@ -409,8 +445,9 @@ def extract_media_info(video_path: str) -> MediaMetadata:
 
     # Extract resolution
     height = extract_height(video_track)
+    width = extract_width(video_track)
     if height:
-        metadata.resolution = get_resolution_from_height(height)
+        metadata.resolution = get_resolution_from_size(height, width)
         logger.debug(f"Extracted resolution: {metadata.resolution} (height={height})")
     else:
         logger.debug(f"Could not extract video height from {video_path}")

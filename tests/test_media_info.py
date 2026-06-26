@@ -15,7 +15,7 @@ from media_info import (
     _detect_codec_from_formats,
     _extract_dolby_vision_profile,
     _safe_extract_track_attribute,
-    get_resolution_from_height,
+    get_resolution_from_size,
 )
 
 # ============================================================================
@@ -37,7 +37,7 @@ class TestGetResolutionFromHeight:
         ],
     )
     def test_standard_heights(self, height: int, expected: str):
-        assert get_resolution_from_height(height) == expected
+        assert get_resolution_from_size(height) == expected
 
     @pytest.mark.parametrize(
         "height,expected",
@@ -59,7 +59,7 @@ class TestGetResolutionFromHeight:
         ],
     )
     def test_non_standard_heights(self, height: int, expected: str):
-        assert get_resolution_from_height(height) == expected
+        assert get_resolution_from_size(height) == expected
 
 
 # ============================================================================
