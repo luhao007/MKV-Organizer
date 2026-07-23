@@ -63,6 +63,7 @@ _WEB_SOURCES: Final = [
     "Disney+",  # Disney+ alternative
     "HULU",  # Hulu
     "NF",  # Netflix
+    "AppleMusic",  # Apple Music
 ]
 SOURCES: Final = [
     "HDTV",
