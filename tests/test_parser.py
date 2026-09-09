@@ -1,4 +1,4 @@
-from parser import parse_filename
+from parser import detect_anime_episode_numbers, parse_filename
 from typing import Final, NotRequired, TypedDict
 
 import pytest
@@ -229,3 +229,233 @@ def test_full_filename_patterns(name: str, case: TestScenario):
     parsed = parse_filename(case["filename"], case.get("is_show", True))
     for field, value in case["expected"].items():
         assert getattr(parsed, field) == value
+
+
+# ============================================================================
+# Anime parsing
+# ============================================================================
+
+
+ANIME_PARSE_TEST_CASES: Final[TestScenarios] = {
+    "main_example": {
+        "filename": "Detective Conan - 0123 [1080p][Multiple Subtitle][FDB1F25C].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Detective Conan",
+            "season": "01",
+            "episode": "0123",
+            "title": "",
+            "resolution": "1080p",
+        },
+    },
+    "subtitle_language": {
+        "filename": "Detective Conan - 0125 [1080p][DDP 5.1][FDB1F25C].chs.srt",
+        "is_show": True,
+        "expected": {
+            "show_name": "Detective Conan",
+            "season": "01",
+            "episode": "0125",
+            "title": "",
+            "resolution": "1080p",
+            "audio_codecs": ["DDP.5.1"],
+            "lang": "chs",
+        },
+    },
+    "keeps_episode_title": {
+        "filename": "Show Name - 0002 - The Episode Title [1080p][HEVC].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Show Name",
+            "season": "01",
+            "episode": "0002",
+            "title": "The Episode Title",
+            "resolution": "1080p",
+            "codec": "HEVC",
+        },
+    },
+    "dot_style_no_brackets": {
+        "filename": "Show.Name.0003.1080p.x265.mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Show Name",
+            "season": "01",
+            "episode": "0003",
+            "title": "",
+            "resolution": "1080p",
+            "codec": "x265",
+        },
+    },
+    "parenthesized_resolution": {
+        "filename": "[SubsPlease] Detective Conan - 0004 (1080p) [deadbeef].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Detective Conan",
+            "season": "01",
+            "episode": "0004",
+            "title": "",
+            "resolution": "1080p",
+        },
+    },
+    "pads_short_number_to_4_digits": {
+        "filename": "Show - 123 [1080p].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Show",
+            "season": "01",
+            "episode": "0123",
+            "title": "",
+        },
+    },
+    "explicit_sxxe_uses_actual_marker": {
+        "filename": "Show Name - S01E0005 [1080p][HEVC].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Show Name",
+            "season": "01",
+            "episode": "0005",
+            "title": "",
+            "resolution": "1080p",
+            "codec": "HEVC",
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "name,case",
+    ANIME_PARSE_TEST_CASES.items(),
+    ids=ANIME_PARSE_TEST_CASES.keys(),
+)
+def test_anime_filename_patterns(name: str, case: TestScenario):
+    parsed = parse_filename(case["filename"], case.get("is_show", True), is_anime=True)
+    for field, value in case["expected"].items():
+        assert getattr(parsed, field) == value
+
+
+def test_anime_fallback_unique_numeric_token():
+    """is_anime without an explicit episode falls back to a unique number."""
+    parsed = parse_filename("Show - 0042 [1080p].mkv", is_anime=True)
+    assert parsed.show_name == "Show"
+    assert (parsed.season, parsed.episode) == ("01", "0042")
+
+
+# ============================================================================
+# detect_anime_episode_numbers (folder-level consecutive-number detection)
+# ============================================================================
+
+
+def test_detect_anime_consecutive_folder():
+    files = [
+        "Detective Conan - 0123 [1080p][Multiple Subtitle][FDB1F25C].mkv",
+        "Detective Conan - 0124 [1080p][Multiple Subtitle][AABBCCDD].mkv",
+        "Detective Conan - 0125 [1080p][DDP 5.1][11223344].chs.srt",
+    ]
+    detected = detect_anime_episode_numbers(files)
+    assert detected == {files[0]: "0123", files[1]: "0124", files[2]: "0125"}
+
+
+def test_detect_anime_ignores_constant_metadata_numbers():
+    """5.1 / 2.0 channel counts repeat in every file; the episode number is
+    the only number that increments, so it must be selected."""
+    files = [
+        "Show.1081.DDP.5.1.mkv",
+        "Show.1082.DDP.5.1.mkv",
+        "Show.1083.DDP.5.1.mkv",
+    ]
+    detected = detect_anime_episode_numbers(files)
+    assert detected == {
+        files[0]: "1081",
+        files[1]: "1082",
+        files[2]: "1083",
+    }
+
+
+def test_detect_anime_skips_explicit_sxxe_files():
+    files = [
+        "Show Name - S01E0005 [1080p][HEVC].mkv",
+        "Show Name - 0006 [1080p][HEVC].mkv",
+    ]
+    detected = detect_anime_episode_numbers(files)
+    # The explicitly-marked file is handled by normal show parsing.
+    assert files[0] not in detected
+    assert detected.get(files[1]) == "0006"
+
+
+def test_detect_anime_single_file():
+    assert detect_anime_episode_numbers(["Show - 0001 [1080p].mkv"]) == {
+        "Show - 0001 [1080p].mkv": "0001"
+    }
+
+
+def test_detect_anime_empty_and_undetectable():
+    assert detect_anime_episode_numbers([]) == {}
+    assert detect_anime_episode_numbers(["Some Show.mkv"]) == {}
+
+
+# ============================================================================
+# Identifier ({imdb-...} / {tmdb-...}) handling
+# ============================================================================
+
+
+IDENTIFIER_TEST_CASES: Final[TestScenarios] = {
+    "style2_tmdb_in_show_name": {
+        "filename": "Detective Conan {tmdb-30983} S01E0001 [1080p][HEVC].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Detective Conan",
+            "season": "01",
+            "episode": "0001",
+            "tmdb_id": 30983,
+        },
+    },
+    "style2_imdb_in_show_name": {
+        "filename": "Better Call Saul {imdb-tt0903747} S01E01 [1080p].mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Better Call Saul",
+            "season": "01",
+            "episode": "01",
+            "imdb_id": "tt0903747",
+        },
+    },
+    "style1_tmdb_after_marker": {
+        "filename": "Detective.Conan.S01E0001.{tmdb-30983}.1080p.mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Detective Conan",
+            "episode": "0001",
+            "tmdb_id": 30983,
+        },
+    },
+    "style1_imdb_after_marker": {
+        "filename": "Better.Call.Saul.S01E01.{imdb-tt0903747}.1080p.mkv",
+        "is_show": True,
+        "expected": {
+            "show_name": "Better Call Saul",
+            "episode": "01",
+            "imdb_id": "tt0903747",
+        },
+    },
+    "tmdb_in_movie_name_region": {
+        "filename": "Detective Conan {tmdb-30983} (2020) [1080p].mkv",
+        "is_show": False,
+        "expected": {
+            "show_name": "Detective Conan",
+            "year": "2020",
+            "tmdb_id": 30983,
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "name,case", IDENTIFIER_TEST_CASES.items(), ids=IDENTIFIER_TEST_CASES.keys()
+)
+def test_identifier_is_not_part_of_show_name(name: str, case: TestScenario):
+    parsed = parse_filename(case["filename"], case.get("is_show", True))
+    for field, value in case["expected"].items():
+        assert getattr(parsed, field) == value
+    # The id must never leak into the show name.
+    assert "{" not in parsed.show_name
+    assert "db-" not in parsed.show_name
+

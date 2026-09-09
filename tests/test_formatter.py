@@ -280,3 +280,88 @@ class TestBuildFilename:
         # Should not have trailing dots
         assert not result.endswith(".")
         assert "S01E01" in result
+
+    # --- Anime: single-season, no SxxExx marker -------------------------
+    def test_style_1_anime_episode_only(self):
+        result = build_filename(
+            style=1,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="",
+            resolution="1080p",
+            codec="HEVC",
+            anime=True,
+        )
+        assert result.startswith("Detective.Conan.0123")
+        assert "S01E" not in result
+        assert "S01" not in result  # season marker entirely absent
+
+    def test_style_2_anime_episode_only(self):
+        result = build_filename(
+            style=2,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="",
+            resolution="1080p",
+            codec="HEVC",
+            anime=True,
+        )
+        assert "Detective Conan 0123 " in result
+        assert "S01E" not in result
+        assert "[1080p]" in result
+        assert "[HEVC]" in result
+
+    def test_style_2_anime_with_title(self):
+        result = build_filename(
+            style=2,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="The Episode",
+            resolution="1080p",
+            anime=True,
+        )
+        assert "Detective Conan 0123 - The Episode " in result
+        assert "S01E" not in result
+
+    def test_anime_false_keeps_sxxe(self):
+        result = build_filename(
+            style=1,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="",
+            resolution="1080p",
+            anime=False,
+        )
+        assert "S01E0123" in result
+
+    def test_style_1_anime_with_season_marker(self):
+        result = build_filename(
+            style=1,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="",
+            resolution="1080p",
+            anime=True,
+            anime_with_season=True,
+        )
+        assert "S01E0123" in result
+        assert result.startswith("Detective.Conan.S01E0123")
+
+    def test_style_2_anime_with_season_marker(self):
+        result = build_filename(
+            style=2,
+            show_name="Detective Conan",
+            season="01",
+            episode="0123",
+            title="",
+            resolution="1080p",
+            anime=True,
+            anime_with_season=True,
+        )
+        assert "Detective Conan S01E0123" in result
+        assert "[1080p]" in result

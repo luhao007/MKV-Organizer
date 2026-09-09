@@ -157,8 +157,8 @@ META_FILES: Final = [
 # Works with dots, spaces, underscores, hyphens as separators.
 SEASON_EPISODE_PATTERN: Final = re.compile(
     r"(?i)(?:^|[.\s_-])*(?:"
-    r"s(?P<season_s>\d{1,2})\.?e(?P<episode_s>\d{2,3})|"
-    r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,3})"
+    r"s(?P<season_s>\d{1,2})\.?e(?P<episode_s>\d{2,4})|"
+    r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,4})"
     r")(?:$|[.\s_-])"
 )
 
@@ -169,8 +169,12 @@ EDITION_PATTERN: Final = re.compile(
     r"(?i)(?P<edition>\{edition-(" + "|".join(map(re.escape, EDITIONS)) + r")\})"
 )
 
+# Identifier braces embedded in filenames, e.g.:
+#   "{imdb-tt0903747}"  (IMDb)
+#   "{tmdb-30983}"      (raw numeric TMDB id, written by this tool)
+#   "{tmdb-tv12345}" / "{imdb-nm1234567}" (prefixed variants, tolerated on read)
 IDENTIFIER_PATTERN: Final = re.compile(
-    r"(?i)(?P<id>\{(im|tm)db-(tt\d{7,8}|nm\d{7,8}|tv\d{7,8})\})"
+    r"(?i)(?P<id>\{(im|tm)db-((tt|nm|tv)\d{7,8}|\d+)\})"
 )
 
 # For capitalization - split on dots, spaces, underscores

@@ -1,20 +1,15 @@
 """Unit tests for organizer.py utility functions."""
 
+from pathlib import Path
+
 import pytest
 
 from models import FileDefinition, ParsedFileInfo
-from organizer import (
-    build_season_episode_key,
-    check_file_type,
-    find_best_audio_codec,
-    get_all_episode_files,
-    get_subtitle_files,
-    get_video_files,
-    has_video_file,
-    is_subtitle_file,
-    is_video_file,
-    parse_season_episode_key,
-)
+from organizer import (build_new_filename, build_season_episode_key,
+                       check_file_type, find_best_audio_codec,
+                       get_all_episode_files, get_subtitle_files,
+                       get_video_files, has_video_file, is_subtitle_file,
+                       is_video_file, parse_season_episode_key)
 
 # ============================================================================
 # check_file_type
@@ -173,3 +168,100 @@ class TestFindBestAudioCodec:
     def test_substring_match(self):
         # "Atmos" substring should match "TrueHD.Atmos"
         assert "TrueHD.Atmos" in find_best_audio_codec(["TrueHD.Atmos.7.1", "AAC"])
+
+
+# ============================================================================
+# organize_files (anime mode)
+# ============================================================================
+
+
+class TestOrganizeFilesAnime:
+    def test_groups_video_and_subtitle_by_detected_episode(
+        self, tmp_path: Path
+    ) -> None:
+        """Anime files without a SxxExx marker are grouped into season 01 with
+        their episode number taken from the consecutive numbering."""
+        from organizer import organize_files
+
+        file_names = [
+            "Detective Conan - 0001 [1080p][Multiple Subtitle][FDB1F25C].mkv",
+            "Detective Conan - 0001 [1080p][Multiple Subtitle][FDB1F25C].chs.srt",
+            "Detective Conan - 0002 [1080p][Multiple Subtitle][AABBCCDD].mkv",
+        ]
+        for name in file_names:
+            (tmp_path / name).write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), is_show=True, is_anime=True)
+
+        assert list(organized.keys()) == ["Detective Conan"]
+        seasons = organized["Detective Conan"]["seasons"]
+        assert list(seasons.keys()) == ["01"]
+        episodes = seasons["01"]
+        assert set(episodes.keys()) == {"0001", "0002"}
+
+        # Subtitle groups with the video of the same episode number.
+        assert set(episodes["0001"].keys()) == {"mkv", "srt"}
+        assert episodes["0001"]["srt"].is_subtitle is True
+        assert list(episodes["0002"].keys()) == ["mkv"]
+
+    def test_explicit_sxxe_marker_kept_in_anime_folder(self, tmp_path: Path) -> None:
+        from organizer import organize_files
+
+        file_names = [
+            "Show Name - S01E0005 [1080p][HEVC].mkv",
+            "Show Name - 0006 [1080p][HEVC].mkv",
+        ]
+        for name in file_names:
+            (tmp_path / name).write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), is_show=True, is_anime=True)
+        episodes = organized["Show Name"]["seasons"]["01"]
+        assert set(episodes.keys()) == {"0005", "0006"}
+
+
+# ============================================================================
+# build_new_filename: identifier in filename toggle
+# ============================================================================
+
+
+class TestBuildNewFilenameIdentifier:
+    def _file_def(
+        self, tmdb_id: int = 0, imdb_id: str = ""
+    ) -> FileDefinition:
+        parsed = ParsedFileInfo(
+            show_name="Detective Conan",
+            season="01",
+            episode="0001",
+            title="",
+            resolution="1080p",
+            tmdb_id=tmdb_id,
+            imdb_id=imdb_id,
+            extension="mkv",
+        )
+        return FileDefinition(
+            parsed=parsed,
+            folder="/fake",
+            filename="/fake/x.mkv",
+            is_media=True,
+        )
+
+    def test_identifier_included_by_default(self):
+        fd = self._file_def(tmdb_id=30983)
+        assert "{tmdb-30983}" in build_new_filename(fd, style=1)
+        assert "{tmdb-30983}" in build_new_filename(fd, style=2)
+
+    def test_identifier_omitted_when_disabled(self):
+        fd = self._file_def(tmdb_id=30983)
+        for style in (1, 2):
+            name = build_new_filename(fd, style=style, include_identifier=False)
+            assert "{tmdb-30983}" not in name
+            assert "Detective" in name
+
+    def test_imdb_identifier(self):
+        fd = self._file_def(imdb_id="tt0903747")
+        assert "{imdb-tt0903747}" in build_new_filename(fd, style=1)
+
+    def test_no_identifier_when_none_known(self):
+        fd = self._file_def()
+        for style in (1, 2):
+            assert "{" not in build_new_filename(fd, style=style)

@@ -137,10 +137,38 @@ def main():
         help="Mark the folder as containing TV shows",
     )
     parser.add_argument(
+        "--anime",
+        action="store_true",
+        help=(
+            "Mark the folder as a single-season anime folder: every file is a "
+            "consecutively numbered episode (no SxxExx marker needed) and is "
+            "treated as S01E#### using the number found in its name. "
+            "Use --show instead when the folder contains multiple seasons."
+        ),
+    )
+    parser.add_argument(
+        "--anime-season",
+        action="store_true",
+        help=(
+            "Include the SxxExx marker (e.g. S01E0123) in anime filenames "
+            "(default: off - only the episode number is written)"
+        ),
+    )
+    parser.add_argument(
         "-f",
         "--force-use-media-info",
         action="store_true",
         help="Force use media info to rename files",
+    )
+    parser.add_argument(
+        "--id-in-filename",
+        action=BooleanOptionalAction,
+        default=True,
+        help=(
+            "Include the known IMDb/TMDB id (e.g. {tmdb-12345}) in renamed "
+            "filenames (default: True). Use --no-id-in-filename for clean names; "
+            "the id is still read back from names and used for TMDB lookups."
+        ),
     )
     parser.add_argument(
         "--normalize-folders",
@@ -175,12 +203,19 @@ def main():
 
     logger.info(f"Scanning folder: {folder}")
 
+    # Anime folders are treated like shows (episode-based renaming/listing and
+    # TMDB episode-name handling), except that they are single-season with the
+    # consecutive episode numbers taken from the filenames themselves.
+    is_anime = bool(args.anime)
+    is_show = True if is_anime else args.show
+
     try:
         # Organize files
         organized = organize_files(
             folder,
             recursive=args.recursive,
-            is_show=args.show,
+            is_show=is_show,
+            is_anime=is_anime,
         )
 
         if not organized:
@@ -200,11 +235,11 @@ def main():
 
         # Handle episode names if this is a TV show folder
         fetched_folders: set[str] = set()
-        if args.show:
+        if is_show:
             fetched_folders = handle_episode_names(
                 folder,
                 organized,
-                is_show=args.show,
+                is_show=is_show,
                 use_episode_names=args.use_episode_names,
                 fetch_if_missing=args.fetch_if_missing,
                 force_fetch=args.force_fetch,
@@ -241,12 +276,15 @@ def main():
             include_language=include_language,
             style=args.style,
             force_use_media_info=args.force_use_media_info,
+            include_identifier=args.id_in_filename,
+            anime=is_anime,
+            anime_with_season=args.anime_season,
         )
 
         if args.list:
-            list_files(organized, is_show=args.show, to_csv=False)
+            list_files(organized, is_show=is_show, to_csv=False)
         if args.list_csv:
-            list_files(organized, is_show=args.show, to_csv=True)
+            list_files(organized, is_show=is_show, to_csv=True)
 
         if ren_count:
             if dry_run:
@@ -257,7 +295,7 @@ def main():
         else:
             logger.info("All files are sorted. No files needed to be renamed")
 
-        if args.export_episode_names and args.show:
+        if args.export_episode_names and is_show:
             index_files = write_episode_name_index(
                 folder, organized, skip_folders=fetched_folders
             )
@@ -265,7 +303,7 @@ def main():
                 for index_file in index_files:
                     logger.info(f"Exported episode names to: {index_file}")
 
-        if args.check_missing and args.show:
+        if args.check_missing and is_show:
             # Load episode_name_index for check_missing from each show folder
             for show_data in organized.values():
                 if "folder" in show_data:

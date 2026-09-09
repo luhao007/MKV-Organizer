@@ -669,7 +669,8 @@ def fetch_episode_names_for_show(
     Handles multiple shows under the same parent folder by looking for IDs:
     1. First checks folder name for {imdb-xxxxx} or {tmdb-xxxx}
     2. Then checks tvshow.nfo file
-    3. Finally uses show name from organized dict
+    3. Then reuses an id parsed from the file names (e.g. "{tmdb-12345}")
+    4. Finally uses show name from organized dict
 
     Args:
         show_folder: Path to the show folder
@@ -740,6 +741,39 @@ def fetch_episode_names_for_show(
                     if show_info:
                         tmdb_show_id = int(show_info["id"])
                         year = str(show_info.get("first_air_date", ""))[:4]
+
+    # ── Step 1.5: Reuse an id already parsed from the filenames ─────────
+    # Files renamed by this tool embed "{imdb-...}/{tmdb-...}", and on a re-run
+    # the parser stores that id in parsed.imdb_id / parsed.tmdb_id. Prefer it
+    # over a (possibly wrong) name search - this is exactly what makes a second
+    # (force) fetch reliable even when the folder name carries no id.
+    if not tmdb_show_id:
+        for season_files in organized[show_name]["seasons"].values():
+            for episode_files in season_files.values():
+                for file_def in episode_files.values():
+                    if file_def.is_subtitle:
+                        continue
+                    parsed = file_def.parsed
+                    if parsed.tmdb_id:
+                        tmdb_show_id = int(parsed.tmdb_id)
+                        logger.info(
+                            f"Found TMDB id from parsed filename: {tmdb_show_id}"
+                        )
+                    elif parsed.imdb_id:
+                        show_info = _get_show_info_by_imdb_id(api_key, parsed.imdb_id)
+                        if show_info:
+                            tmdb_show_id = int(show_info["id"])
+                            year = str(show_info.get("first_air_date", ""))[:4]
+                            logger.info(
+                                f"Found IMDb id from parsed filename:"
+                                f" {parsed.imdb_id} (TMDB {tmdb_show_id})"
+                            )
+                    if tmdb_show_id:
+                        break
+                if tmdb_show_id:
+                    break
+            if tmdb_show_id:
+                break
 
     # ── Step 2: If still no ID, search by show name ────────────────────
     if not tmdb_show_id:

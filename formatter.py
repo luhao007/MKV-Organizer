@@ -209,6 +209,8 @@ def build_filename(
     lang: str = "",
     extras: list[str] | None = None,
     release_group: str = "",
+    anime: bool = False,
+    anime_with_season: bool = False,
 ) -> str:
     """
     Build a standardized filename from components.
@@ -220,6 +222,12 @@ def build_filename(
         ``Show Name S01E01 {id} - Title [1080p][HEVC][DV][WEB-DL][TrueHD Atmos 7.1]-GROUP``
 
     Empty/optional fields are silently omitted.
+
+    When ``anime`` is True the folder is treated as a single-season anime.  By
+    default no ``SxxExx`` marker is written and only the (4-digit) episode
+    number is kept, e.g. ``Show.Name.0123.1080p.mkv`` /
+    ``Show Name 0123 [1080p]``.  Set ``anime_with_season`` to True to also
+    write the ``SxxExx`` marker, e.g. ``Show.Name.S01E0123.1080p.mkv``.
 
     Args:
         style: 1 for dot-separated, 2 for space-separated with brackets.
@@ -239,6 +247,10 @@ def build_filename(
         lang: Language code (e.g., ``"eng"``).
         extras: Additional tags (e.g., ``["IMAX.Enhanced"]``).
         release_group: Release group name (e.g., ``"RARBG"``).
+        anime: If True, render a single-season anime name.
+        anime_with_season: Only meaningful when ``anime`` is True.  If True the
+            ``SxxExx`` marker is written (e.g. ``S01E0123``); if False (the
+            default) only the episode number is written.
 
     Returns:
         Formatted filename string (without extension).
@@ -262,7 +274,14 @@ def build_filename(
 
     if style == 1:
         parts = [format_title(show_name, style)]
-        if season and episode:
+        if anime and not anime_with_season and episode:
+            # anime (default): single-season -> episode number only (no SxxExx)
+            parts.append(episode)
+            if identifier:
+                parts.append(identifier)
+            if title:
+                parts.append(format_title(title, style))
+        elif season and episode:
             # show
             parts.append(f"S{season}E{episode}")
             if identifier:
@@ -278,7 +297,16 @@ def build_filename(
         filename = ".".join(parts + metas)
     elif style == 2:
         filename = format_title(show_name, 2)
-        if season and episode:
+        if anime and not anime_with_season and episode:
+            # anime (default): single-season -> episode number only (no SxxExx)
+            if identifier:
+                filename += f" {identifier}"
+            filename += f" {episode}"
+            if title:
+                filename += f" - {format_title(title, 2)} "
+            else:
+                filename += " "
+        elif season and episode:
             # show
             if identifier:
                 filename += f" {identifier}"

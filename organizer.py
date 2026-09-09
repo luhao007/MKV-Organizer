@@ -3,7 +3,7 @@
 import os
 import traceback
 from formatter import build_filename, normalize_illegal_chars
-from parser import parse_filename
+from parser import detect_anime_episode_numbers, parse_filename
 from pathlib import Path
 from typing import Callable, Generator, Iterable, Optional
 
@@ -264,6 +264,8 @@ def write_episode_name_index(
                 file.write(show_name)
                 file.write("\n")
                 for key in sorted(mappings):
+                    if key == "name":
+                        continue
                     season, episode = parse_season_episode_key(key)
                     file.write(f"{season}|{episode}|{mappings[key]}\n")
 
@@ -271,6 +273,7 @@ def write_episode_name_index(
             written_files.append(str(index_path))
         except Exception as e:
             logger.error(f"Error writing episode_names.txt to {show_folder}: {e}")
+            traceback.print_exc()
 
     return written_files
 
@@ -430,9 +433,20 @@ def organize_files(
     folder: str,
     recursive: bool = False,
     is_show: bool = True,
+    is_anime: bool = False,
 ) -> FileOrganization:
     """
     Scan folder and organize files by show/season/episode.
+
+    Args:
+        folder: Path of the folder to scan.
+        recursive: Recurse into subdirectories.
+        is_show: Whether files should be treated as episodes of a show.
+        is_anime: Treat the folder as a single-season anime folder.  Files that
+            have no explicit ``SxxExx`` marker get their episode number from the
+            consecutive-number pattern detected across the files in the same
+            folder (see parser.detect_anime_episode_numbers) and are grouped
+            under season "01".
 
     Returns:
         Dict structure: {
@@ -450,6 +464,25 @@ def organize_files(
     parsed_count = 0
     skipped_count = 0
 
+    # In anime mode every file in the same folder belongs to one season and
+    # carries a bare (consecutive) episode number.  Detect those numbers once
+    # per folder before parsing so they can be passed into parse_filename().
+    anime_episodes: dict[str, str] = {}
+    if is_anime:
+        anime_files: list[str] = []
+        for filename in os.listdir(folder):
+            full_path = os.path.join(folder, filename)
+            if os.path.isdir(full_path):
+                continue
+            if (
+                "." not in filename
+                or filename.startswith(".")
+                or any(filename.endswith(meta) for meta in META_FILES)
+            ):
+                continue
+            anime_files.append(filename)
+        anime_episodes = detect_anime_episode_numbers(anime_files)
+
     # First pass: collect files from current directory
     for filename in os.listdir(folder):
         full_path = os.path.join(folder, filename)
@@ -462,6 +495,7 @@ def organize_files(
                     full_path,
                     recursive=True,
                     is_show=is_show,
+                    is_anime=is_anime,
                 )
                 # Merge subdirectory results
                 for show_name, show_data in suborganized.items():
@@ -483,7 +517,15 @@ def organize_files(
 
         # Try to parse filename
         try:
-            parsed = parse_filename(filename, is_show=is_show)
+            if is_anime:
+                parsed = parse_filename(
+                    filename,
+                    is_show=True,
+                    is_anime=True,
+                    anime_episode=anime_episodes.get(filename, ""),
+                )
+            else:
+                parsed = parse_filename(filename, is_show=is_show)
             parsed_count += 1
         except BaseException as e:
             logger.error(f"Skipping {filename}: {e}")
@@ -690,19 +732,34 @@ def build_new_filename(
     file_def: FileDefinition,
     include_language: bool = True,
     style: int = 1,
+    include_identifier: bool = True,
+    anime: bool = False,
+    anime_with_season: bool = False,
 ) -> str:
     """
     Build new filename for a file.
 
     For subtitles, appends language code: "Show.S01E01.Title.chs.srt"
+
+    Args:
+        file_def: The file to build a name for.
+        include_language: If True, append the language to subtitle files.
+        style: 1 (dots) or 2 (spaces + brackets).
+        include_identifier: If True, embed the known IMDb/TMDB id in the name
+            (e.g. ``{tmdb-12345}``).  Set to False for clean names without the
+            id; the id is still parsed & used for TMDB lookups.
+        anime: If True, treat the file as single-season anime.
+        anime_with_season: Only used when ``anime`` is True.  If True the
+            ``SxxExx`` marker is written (e.g. ``S01E0123``); if False (the
+            default) only the episode number is written.
     """
     parsed = file_def.parsed
-    if parsed.imdb_id:
-        identifier = f"{{imdb-{parsed.imdb_id}}}"
-    elif parsed.tmdb_id:
-        identifier = f"{{tmdb-{parsed.tmdb_id}}}"
-    else:
-        identifier = ""
+    identifier = ""
+    if include_identifier:
+        if parsed.imdb_id:
+            identifier = f"{{imdb-{parsed.imdb_id}}}"
+        elif parsed.tmdb_id:
+            identifier = f"{{tmdb-{parsed.tmdb_id}}}"
 
     # Build base filename
     base = build_filename(
@@ -723,6 +780,8 @@ def build_new_filename(
         lang=parsed.lang if include_language and not file_def.is_subtitle else "",
         extras=parsed.extras,
         release_group=parsed.release_group,
+        anime=anime,
+        anime_with_season=anime_with_season,
     )
 
     if parsed.extension == "thumb.jpg":
@@ -741,6 +800,9 @@ def rename_files(
     include_language: bool = True,
     style: int = 1,
     force_use_media_info: bool = False,
+    include_identifier: bool = True,
+    anime: bool = False,
+    anime_with_season: bool = False,
 ) -> int:
     """
     Rename all files according to standardized naming scheme.
@@ -749,6 +811,11 @@ def rename_files(
         organized: FileOrganization structure from organize_files()
         dry_run: If True, only log what would be done; don't actually rename
         include_language: If True, append language code to subtitle files
+        include_identifier: If True, embed the known IMDb/TMDB id in names
+        anime: If True, write single-season anime names
+        anime_with_season: Only used when ``anime`` is True.  If True the
+            ``SxxExx`` marker is written; if False (the default) only the
+            episode number is written
     """
     ren_count = 0
 
@@ -771,7 +838,14 @@ def rename_files(
         # Rename each file
         for file_def in all_files:
             logger.debug(f"Processing file: {file_def.filename}")
-            new_filename = build_new_filename(file_def, include_language, style)
+            new_filename = build_new_filename(
+                file_def,
+                include_language,
+                style,
+                include_identifier=include_identifier,
+                anime=anime,
+                anime_with_season=anime_with_season,
+            )
             logger.debug(
                 f"Generated new filename: {new_filename} for {file_def.filename}"
             )
