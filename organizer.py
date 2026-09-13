@@ -1,6 +1,7 @@
 """Organize and rename video files."""
 
 import os
+import re
 import traceback
 from formatter import build_filename, normalize_illegal_chars
 from parser import detect_anime_episode_numbers, parse_filename
@@ -24,6 +25,15 @@ def check_file_type(filename: str, extensions: Iterable[str]) -> bool:
     """Check if file has one of the specified extensions."""
     ext = filename.split(".")[-1].lower()
     return ext in extensions
+
+
+def _media_name_key(name: str) -> str:
+    """Build a case/separator-insensitive key used to match files of one title.
+
+    E.g. "Avengers Infinity War" and "avengers.infinity_war" map to the same
+    key, so a subtitle file is grouped with its movie.
+    """
+    return re.sub(r"[\s._-]+", " ", name).strip().lower()
 
 
 def iterate_organized_episodes(
@@ -501,9 +511,22 @@ def organize_files(
                 for show_name, show_data in suborganized.items():
                     if show_name not in organized:
                         organized[show_name] = show_data
-                    else:
+                    elif is_show:
                         # Merge seasons for same show
                         organized[show_name]["seasons"].update(show_data["seasons"])
+                    elif organized[show_name]["folder"] == show_data["folder"]:
+                        # Same movie split over several files/folders merged
+                        # during the scan of that folder.
+                        organized[show_name]["seasons"].update(show_data["seasons"])
+                    else:
+                        # Movies: the same name in another folder (e.g. a
+                        # two-part release) must not overwrite the first one.
+                        unique_name = show_name
+                        duplicate = 2
+                        while unique_name in organized:
+                            unique_name = f"{show_name} ({duplicate})"
+                            duplicate += 1
+                        organized[unique_name] = show_data
             continue
 
         if (
@@ -569,27 +592,59 @@ def organize_files(
         logger.debug(f"Organized: {filename} -> {show_name} S{season}E{episode}.{ext}")
 
         # Initialize show entry if needed
-        if show_name not in organized:
+        if is_show:
+            # Every file in a show folder belongs to the same show, even when
+            # the parsed names differ slightly (e.g. multi-season folders).
+            if show_name not in organized:
+                for sn, sd in organized.items():
+                    if sd["folder"] == show_folder:
+                        if not sn:
+                            # In case of empty existing show name,
+                            # replace with the current one
+                            organized[show_name] = sd
+                            organized.pop(sn)
+                        else:
+                            # Just use the existing one
+                            show_name = sn
+                            parsed.show_name = sn
+                        break
+                else:
+                    organized[show_name] = {
+                        "folder": show_folder,
+                        "seasons": {},
+                    }
+            # Ensure folder is set to the deepest show folder
+            elif show_folder != folder:
+                organized[show_name]["folder"] = show_folder
+        else:
+            # Movies are standalone files: merge them only with the entry of
+            # the same movie in the same folder (so a subtitle file follows its
+            # movie), never with a *different* movie that happens to sit in the
+            # same folder.
+            matching_name = ""
             for sn, sd in organized.items():
-                if sd["folder"] == show_folder:
-                    if not sn:
-                        # In case of empty existing show name,
-                        # replace with the current one
-                        organized[show_name] = sd
-                        organized.pop(sn)
-                    else:
-                        # Just use the existing one
-                        show_name = sn
-                        parsed.show_name = sn
+                if sd["folder"] != show_folder:
+                    continue
+                if _media_name_key(sn) == _media_name_key(show_name):
+                    matching_name = sn
                     break
+
+            if matching_name:
+                show_name = matching_name
+                parsed.show_name = matching_name
             else:
+                # Keep both entries when the same movie name occurs in another
+                # folder (e.g. a two-part release) instead of overwriting it.
+                unique_name = show_name
+                duplicate = 2
+                while unique_name in organized:
+                    unique_name = f"{show_name} ({duplicate})"
+                    duplicate += 1
+                show_name = unique_name
                 organized[show_name] = {
                     "folder": show_folder,
                     "seasons": {},
                 }
-        # Ensure folder is set to the deepest show folder
-        elif show_folder != folder:
-            organized[show_name]["folder"] = show_folder
 
         # Add file to seasons structure
         organized[show_name]["seasons"].setdefault(season, {}).setdefault(episode, {})[
@@ -1015,18 +1070,134 @@ def list_files(organized: FileOrganization, is_show: bool = True, to_csv: bool =
         print(df)
 
 
-def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> int:
+# Folder names that carry no information of their own ("1", "CD1", ...).  A
+# movie folder without a year is only renamed when its current name is
+# meaningless, so a meaningful folder name is never replaced by a bare title.
+_NUMBERED_FOLDER_PATTERN = re.compile(
+    r"^(?:cd|disc|disk|dvd|part|pt|vol|volume)?[\s._-]*\d+$", re.IGNORECASE
+)
+_GENERIC_FOLDER_NAMES = {
+    "new",
+    "new folder",
+    "movie",
+    "movies",
+    "video",
+    "videos",
+    "media",
+    "download",
+    "downloads",
+    "temp",
+    "tmp",
+    "untitled",
+    "unknown",
+    "misc",
+    "other",
+    "unsorted",
+    "to sort",
+    "sort",
+}
+
+
+def is_meaningless_folder_name(folder_name: str) -> bool:
     """
-    Normalize folder names to "Show Name {identifier}" format.
+    Check if a folder name carries no useful information.
+
+    Useful for deciding whether a movie folder may be renamed after the movie
+    itself.  Returns True for bare numbers ("1", "2"), numbered disc/part names
+    ("CD1", "Part 2") and generic names ("New folder", "Movies", ...).
+    """
+    name = folder_name.strip().strip("._- ")
+    if not name:
+        return True
+    if _NUMBERED_FOLDER_PATTERN.match(name):
+        return True
+    return name.lower() in _GENERIC_FOLDER_NAMES
+
+
+def build_normalized_folder_name(name: str, year: str, identifier: str) -> str:
+    """
+    Build a normalized folder name: "Name (Year) {identifier}".
+
+    Empty ``year``/``identifier`` parts are omitted.
+    """
+    normalized = name
+    if year:
+        normalized = f"{normalized} ({year})"
+    if identifier:
+        normalized = f"{normalized} {identifier}"
+    return normalize_illegal_chars(normalized)
+
+
+def extract_movie_info(show_data: ShowData, fallback_name: str) -> tuple[str, str, str]:
+    """
+    Extract (identifier, year, movie_name) for a movie entry.
+
+    The movie name comes from the first video file (it may have been replaced
+    by a title fetched from ``movie.nfo``), the year and identifier from the
+    first file that provides them.
+    """
+    movie_name = fallback_name
+    year = ""
+    identifier = ""
+    first_video = True
+
+    seasons = show_data.get("seasons", {})
+    for season_episodes in seasons.values():
+        for episode_files in season_episodes.values():
+            for file_def in get_video_files(episode_files):
+                parsed = file_def.parsed
+                if first_video:
+                    movie_name = parsed.show_name or fallback_name
+                    first_video = False
+                if not year:
+                    year = parsed.year
+                if not identifier:
+                    if parsed.imdb_id:
+                        identifier = f"{{imdb-{parsed.imdb_id}}}"
+                    elif parsed.tmdb_id:
+                        identifier = f"{{tmdb-{parsed.tmdb_id}}}"
+
+    return identifier, year, movie_name
+
+
+def normalize_folders(
+    organized: FileOrganization,
+    fetch_tmdb: bool = False,
+    is_show: bool = True,
+    base_folder: str = "",
+) -> int:
+    """
+    Normalize folder names to "Name (Year) {identifier}" format.
+
+    Shows are renamed to "Show Name (Year) {identifier}" (an identifier must be
+    known).  Movies are renamed to "Movie Name (Year) {identifier}"; when no
+    year is known the folder is only renamed if its current name is generic
+    (see ``is_meaningless_folder_name``).
 
     Args:
         organized: FileOrganization structure from organize_files()
-        fetch_tmdb: If True, fetch show info from TMDB to enrich identifiers and titles
+        fetch_tmdb: If True, fetch title/id info from TMDB (and tvshow.nfo /
+            movie.nfo) to enrich identifiers, titles and years
+        is_show: True when ``organized`` holds TV shows, False for movies
+        base_folder: The folder the user scanned.  In movie mode it is never
+            renamed so a folder full of loose movies is not renamed after one
+            of its movies.
 
     Returns:
         Number of folders that were renamed
     """
     normalized_count = 0
+    base_folder_norm = os.path.normpath(base_folder) if base_folder else ""
+
+    # A folder shared by more than one entry is ambiguous in movie mode (two
+    # movies in the same folder) -> leave it alone.
+    folder_owners: dict[str, list[str]] = {}
+    for owner_name, owner_data in organized.items():
+        owner_folder = owner_data.get("folder")
+        if owner_folder:
+            folder_owners.setdefault(os.path.normpath(owner_folder), []).append(
+                owner_name
+            )
 
     for show_name, show_data in organized.items():
         folder = show_data.get("folder")
@@ -1034,33 +1205,80 @@ def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> 
             logger.debug(f"No folder found for show: {show_name}")
             continue
 
-        # Fetch TMDB info if requested to enrich identifiers and titles
+        folder_norm = os.path.normpath(folder)
+
+        # Fetch TMDB/nfo info if requested to enrich identifiers and titles
         if fetch_tmdb:
-            from tmdb import fetch_title_and_ids_for_show
-
             logger.info(f"Fetching TMDB info for {show_name}")
-            fetch_title_and_ids_for_show(folder, {show_name: show_data})
+            if is_show:
+                from tmdb import fetch_title_and_ids_for_show
 
-        # Get identifier from the first video file
-        identifier, year, _ = extract_identifier_from_organized(show_data, show_name)
+                fetch_title_and_ids_for_show(folder, {show_name: show_data})
+            else:
+                # Movies are only looked up by an id from movie.nfo / folder
+                # name / file name, never by name.
+                from tmdb import fetch_title_and_ids_for_movie
 
-        # Build new folder name
-        if identifier:
-            new_folder_name = f"{show_name} ({year}) {identifier}"
-        else:
-            logger.debug(
-                f"No identifier found for show: {show_name}, skipping normalization"
+                fetch_title_and_ids_for_movie(folder, {show_name: show_data})
+
+        if is_show:
+            # Get identifier from the first video file
+            identifier, year, folder_label = extract_identifier_from_organized(
+                show_data, show_name
             )
-            continue
+            if not identifier:
+                logger.debug(
+                    f"No identifier found for show: {show_name}, skipping normalization"
+                )
+                continue
+        else:
+            # Movies: never rename the scanned folder itself, otherwise the
+            # user's movie folder would be renamed after a single movie.
+            if base_folder_norm and folder_norm == base_folder_norm:
+                logger.info(
+                    f"Skipping {folder}: it is the scanned folder itself and is"
+                    " never renamed. Point at its parent folder to normalize it."
+                )
+                continue
 
-        new_folder_name = normalize_illegal_chars(new_folder_name)
+            owners = folder_owners.get(folder_norm, [])
+            if len(owners) > 1:
+                logger.warning(
+                    f"Skipping {folder}: it contains multiple movies"
+                    f" ({', '.join(sorted(owners))})"
+                )
+                continue
+
+            identifier, year, folder_label = extract_movie_info(show_data, show_name)
+
+            # Keep an id/year that is already part of the folder name so a
+            # re-run does not strip them again.
+            if not identifier:
+                from tmdb import extract_id_from_folder_name
+
+                folder_id = extract_id_from_folder_name(folder)
+                if folder_id:
+                    id_type, id_value = folder_id
+                    identifier = f"{{{id_type}-{id_value}}}"
+            if not year:
+                folder_year = re.search(r"\((\d{4})\)", Path(folder).name)
+                year = folder_year.group(1) if folder_year else ""
+
+            if not year and not is_meaningless_folder_name(Path(folder).name):
+                logger.info(
+                    f"Skipping {folder}: no year found and the folder name is not"
+                    " generic, so it is left as-is"
+                )
+                continue
+
+        new_folder_name = build_normalized_folder_name(folder_label, year, identifier)
 
         # Create normalized folder path
         parent_folder = str(Path(folder).parent)
         new_folder_path = os.path.join(parent_folder, new_folder_name)
 
         # Check if the folder already has the correct name
-        if os.path.normpath(folder) == os.path.normpath(new_folder_path):
+        if folder_norm == os.path.normpath(new_folder_path):
             logger.debug(f"Folder already normalized: {folder}")
             continue
 
@@ -1078,12 +1296,22 @@ def normalize_folders(organized: FileOrganization, fetch_tmdb: bool = False) -> 
             show_data["folder"] = new_folder_path
         except OSError as e:
             logger.error(f"Failed to rename folder {folder}: {e}")
+            continue
 
-        # Update folder path in all FileDefinitions
+        # Update the paths of all FileDefinitions: the files moved together
+        # with the folder, so their full path (used as the rename source later)
+        # must be updated too.  Files in subfolders (e.g. "Season 1") keep
+        # their position relative to the renamed folder.
         seasons = show_data.get("seasons", {})
         for season_episodes in seasons.values():
             for episode_files in season_episodes.values():
                 for file_def in get_all_episode_files(episode_files):
-                    file_def.folder = new_folder_path
+                    relative_folder = os.path.relpath(file_def.folder, folder)
+                    file_def.folder = os.path.normpath(
+                        os.path.join(new_folder_path, relative_folder)
+                    )
+                    file_def.filename = os.path.join(
+                        file_def.folder, Path(file_def.filename).name
+                    )
 
     return normalized_count

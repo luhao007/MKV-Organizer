@@ -184,7 +184,7 @@ WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_]+")
 WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")
 
 # Stopwords for title capitalization (keep lowercase except first word)
-STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an"}
+STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an", "at"}
 
 # Some special words that should not be captalized
 SPECIALWORDS: Final = [

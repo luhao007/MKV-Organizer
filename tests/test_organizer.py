@@ -1,15 +1,28 @@
 """Unit tests for organizer.py utility functions."""
 
+import os
 from pathlib import Path
 
 import pytest
 
 from models import FileDefinition, ParsedFileInfo
-from organizer import (build_new_filename, build_season_episode_key,
-                       check_file_type, find_best_audio_codec,
-                       get_all_episode_files, get_subtitle_files,
-                       get_video_files, has_video_file, is_subtitle_file,
-                       is_video_file, parse_season_episode_key)
+from organizer import (
+    build_new_filename,
+    build_normalized_folder_name,
+    build_season_episode_key,
+    check_file_type,
+    find_best_audio_codec,
+    get_all_episode_files,
+    get_subtitle_files,
+    get_video_files,
+    has_video_file,
+    is_meaningless_folder_name,
+    is_subtitle_file,
+    is_video_file,
+    normalize_folders,
+    organize_files,
+    parse_season_episode_key,
+)
 
 # ============================================================================
 # check_file_type
@@ -225,9 +238,7 @@ class TestOrganizeFilesAnime:
 
 
 class TestBuildNewFilenameIdentifier:
-    def _file_def(
-        self, tmdb_id: int = 0, imdb_id: str = ""
-    ) -> FileDefinition:
+    def _file_def(self, tmdb_id: int = 0, imdb_id: str = "") -> FileDefinition:
         parsed = ParsedFileInfo(
             show_name="Detective Conan",
             season="01",
@@ -265,3 +276,226 @@ class TestBuildNewFilenameIdentifier:
         fd = self._file_def()
         for style in (1, 2):
             assert "{" not in build_new_filename(fd, style=style)
+
+
+# ============================================================================
+# is_meaningless_folder_name / build_normalized_folder_name
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    "folder_name,expected",
+    [
+        ("1", True),
+        ("2", True),
+        ("007", True),
+        ("CD1", True),
+        ("part 2", True),
+        ("New folder", True),
+        ("Movies", True),
+        ("Downloads", True),
+        ("", True),
+        ("   ", True),
+        ("aaa", False),
+        ("My Rips", False),
+        ("aaa (2000)", False),
+        ("Avengers Infinity War", False),
+    ],
+)
+def test_is_meaningless_folder_name(folder_name: str, expected: bool):
+    assert is_meaningless_folder_name(folder_name) is expected
+
+
+class TestBuildNormalizedFolderName:
+    def test_name_year_and_identifier(self):
+        assert (
+            build_normalized_folder_name("Aaa", "2000", "{tmdb-1}")
+            == "Aaa (2000) {tmdb-1}"
+        )
+
+    def test_year_only(self):
+        assert build_normalized_folder_name("Aaa", "2000", "") == "Aaa (2000)"
+
+    def test_identifier_only(self):
+        assert build_normalized_folder_name("Aaa", "", "{tmdb-1}") == "Aaa {tmdb-1}"
+
+    def test_unknown_year_does_not_add_empty_parentheses(self):
+        assert build_normalized_folder_name("Aaa", "", "") == "Aaa"
+
+
+# ============================================================================
+# organize_files (movies)
+# ============================================================================
+
+
+class TestOrganizeFilesMovies:
+    def test_multiple_movies_in_one_folder_are_kept_separate(
+        self, tmp_path: Path
+    ) -> None:
+        for name in ("aaa.2000.mkv", "bbb.2001.mkv"):
+            (tmp_path / name).write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), is_show=False)
+
+        assert set(organized.keys()) == {"aaa", "bbb"}
+        assert organized["aaa"]["seasons"][""][""]["mkv"].parsed.year == "2000"
+        assert organized["bbb"]["seasons"][""][""]["mkv"].parsed.year == "2001"
+
+    def test_subtitle_is_grouped_with_its_movie(self, tmp_path: Path) -> None:
+        for name in ("aaa.2000.mkv", "aaa.2000.chs.srt", "bbb.2001.mkv"):
+            (tmp_path / name).write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), is_show=False)
+
+        assert set(organized.keys()) == {"aaa", "bbb"}
+        files = organized["aaa"]["seasons"][""][""]
+        assert set(files.keys()) == {"mkv", "srt"}
+        assert files["srt"].is_subtitle is True
+
+    def test_same_movie_name_in_two_folders_keeps_both(self, tmp_path: Path) -> None:
+        for sub in ("1", "2"):
+            (tmp_path / sub).mkdir()
+            (tmp_path / sub / "aaa.2000.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+
+        assert len(organized) == 2
+        folders = sorted(
+            os.path.basename(data["folder"]) for data in organized.values()
+        )
+        assert folders == ["1", "2"]
+
+
+# ============================================================================
+# normalize_folders (movies)
+# ============================================================================
+
+
+class TestNormalizeFoldersMovies:
+    def _nested_movie(self, tmp_path: Path, sub: str, filename: str) -> Path:
+        folder = tmp_path / sub
+        folder.mkdir()
+        (folder / filename).write_text("", encoding="utf-8")
+        return folder
+
+    def test_nested_movie_folders_are_normalized(self, tmp_path: Path) -> None:
+        self._nested_movie(tmp_path, "1", "aaa.2000.mkv")
+        self._nested_movie(tmp_path, "2", "bbb.2001.1080p.mkv")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert count == 2
+        assert sorted(os.listdir(tmp_path)) == ["aaa (2000)", "bbb (2001)"]
+        # Folder path AND full file path of the FileDefinitions are updated so
+        # the following rename step can find the files.
+        for data in organized.values():
+            for episodes in data["seasons"].values():
+                for files in episodes.values():
+                    for file_def in files.values():
+                        assert Path(file_def.folder).name in {
+                            "aaa (2000)",
+                            "bbb (2001)",
+                        }
+                        assert Path(file_def.filename).parent == Path(file_def.folder)
+                        assert Path(file_def.filename).exists()
+
+    def test_files_in_season_subfolder_keep_their_relative_path(
+        self, tmp_path: Path
+    ) -> None:
+        folder = tmp_path / "Show.A"
+        season = folder / "Season 1"
+        season.mkdir(parents=True)
+        (season / "Show.A.S01E01.{tmdb-123}.1080p.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=True)
+        count = normalize_folders(organized, is_show=True, base_folder=str(tmp_path))
+
+        assert count == 1
+        file_def = organized["Show A"]["seasons"]["01"]["01"]["mkv"]
+        assert Path(file_def.folder) == tmp_path / "Show A {tmdb-123}" / "Season 1"
+        assert Path(file_def.filename).exists()
+
+    def test_identifier_is_kept_in_folder_name(self, tmp_path: Path) -> None:
+        self._nested_movie(tmp_path, "1", "aaa.2000.{tmdb-9}.mkv")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert os.listdir(tmp_path) == ["aaa (2000) {tmdb-9}"]
+
+    def test_folder_without_year_is_renamed_when_generic(self, tmp_path: Path) -> None:
+        self._nested_movie(tmp_path, "1", "aaa.mkv")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert count == 1
+        assert os.listdir(tmp_path) == ["aaa"]
+
+    def test_folder_without_year_and_meaningful_name_is_left_alone(
+        self, tmp_path: Path
+    ) -> None:
+        self._nested_movie(tmp_path, "My Rips", "aaa.mkv")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert count == 0
+        assert os.listdir(tmp_path) == ["My Rips"]
+
+    def test_scanned_folder_is_never_renamed(self, tmp_path: Path) -> None:
+        for name in ("aaa.2000.mkv", "bbb.2001.mkv"):
+            (tmp_path / name).write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert count == 0
+        assert tmp_path.is_dir()
+        assert sorted(os.listdir(tmp_path)) == [
+            "aaa.2000.mkv",
+            "bbb.2001.mkv",
+        ]
+
+    def test_folder_with_multiple_movies_is_skipped(self, tmp_path: Path) -> None:
+        self._nested_movie(tmp_path, "1", "aaa.2000.mkv")
+        (tmp_path / "1" / "bbb.2001.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        assert count == 0
+        assert os.listdir(tmp_path) == ["1"]
+
+    def test_already_normalized_folder_is_untouched(self, tmp_path: Path) -> None:
+        self._nested_movie(tmp_path, "aaa (2000) {tmdb-9}", "aaa.2000.mkv")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=False)
+        count = normalize_folders(organized, is_show=False, base_folder=str(tmp_path))
+
+        # The {tmdb-9} already present in the folder name is preserved
+        assert count == 0
+        assert os.listdir(tmp_path) == ["aaa (2000) {tmdb-9}"]
+
+    def test_show_normalization_still_works(self, tmp_path: Path) -> None:
+        folder = tmp_path / "Show.A"
+        folder.mkdir()
+        (folder / "Show.A.S01E01.{tmdb-123}.1080p.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=True)
+        count = normalize_folders(organized, is_show=True, base_folder=str(tmp_path))
+
+        assert count == 1
+        assert os.listdir(tmp_path) == ["Show A {tmdb-123}"]
+
+    def test_show_without_identifier_is_not_renamed(self, tmp_path: Path) -> None:
+        folder = tmp_path / "Show.A"
+        folder.mkdir()
+        (folder / "Show.A.S01E01.1080p.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), recursive=True, is_show=True)
+        count = normalize_folders(organized, is_show=True, base_folder=str(tmp_path))
+
+        assert count == 0
+        assert os.listdir(tmp_path) == ["Show.A"]

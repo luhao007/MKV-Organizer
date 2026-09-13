@@ -659,6 +659,142 @@ def fetch_title_and_ids_for_show(
                             file_def.parsed.year = year
 
 
+def _get_movie_info_by_tmdb_id(
+    api_key: str, tmdb_movie_id: int
+) -> Optional[dict[str, Any]]:
+    """Get movie info from TMDB using a direct TMDB ID."""
+    data = _tmdb_get(f"/movie/{tmdb_movie_id}", {"api_key": api_key})
+    if data:
+        logger.info(
+            f"Found TMDB movie: {data.get('title', 'Unknown')} (id: {tmdb_movie_id})"
+        )
+    return data
+
+
+def _get_movie_info_by_imdb_id(api_key: str, imdb_id: str) -> Optional[dict[str, Any]]:
+    """Get movie info from TMDB using an IMDb ID."""
+    data = _tmdb_get(
+        f"/find/{imdb_id}", {"api_key": api_key, "external_source": "imdb_id"}
+    )
+    if not data:
+        return None
+
+    movie_results = data.get("movie_results", [])
+    if movie_results:
+        return _get_movie_info_by_tmdb_id(api_key, int(movie_results[0]["id"]))
+
+    logger.warning(f"No TMDB movie found for IMDB ID: {imdb_id}")
+    return None
+
+
+def fetch_title_and_ids_for_movie(
+    movie_folder: str,
+    organized: FileOrganization,
+) -> Optional[tuple[str, str]]:
+    """
+    Fetch a movie's title, year and ids from ``movie.nfo`` or a known id.
+
+    Unlike TV shows, movies are **not** searched by name: only ids already
+    present in ``movie.nfo``, in the folder name or in the file names are used
+    to look the movie up on TMDB.
+
+    Args:
+        movie_folder: Folder holding the movie file(s).
+        organized: FileOrganization entry (updated in place).
+
+    Returns:
+        Tuple of (title, year) when info was found, otherwise None.
+    """
+    if not organized:
+        return None
+
+    for show_name, show_data in organized.items():
+        logger.info(f"Fetching movie info for: {show_name}")
+
+        title = ""
+        year = ""
+        imdb_id = ""
+        tmdb_id = 0
+
+        # 1. movie.nfo
+        movie_nfo_path = Path(movie_folder) / "movie.nfo"
+        if os.path.exists(movie_nfo_path):
+            nfo_data = parse_movie_info(str(movie_nfo_path))
+            if nfo_data:
+                title = nfo_data.get("original_title", "")
+                year = nfo_data.get("year", "")
+                imdb_id = nfo_data.get("imdb_id", "")
+                tmdb_id = int(nfo_data["tmdb_id"]) if nfo_data.get("tmdb_id") else 0
+
+        # 2. An id in the folder name (e.g. "Movie (2000) {tmdb-123}") or in a
+        #    file name (e.g. "Movie.2000.{tmdb-123}.mkv")
+        if not title or not year:
+            id_type = ""
+            id_value = ""
+            folder_id = extract_id_from_folder_name(movie_folder)
+            if folder_id:
+                id_type, id_value = folder_id
+            else:
+                for seasons in show_data["seasons"].values():
+                    for episodes in seasons.values():
+                        for file_def in episodes.values():
+                            if file_def.is_subtitle:
+                                continue
+                            if file_def.parsed.imdb_id:
+                                id_type, id_value = "imdb", file_def.parsed.imdb_id
+                            elif file_def.parsed.tmdb_id:
+                                id_type = "tmdb"
+                                id_value = str(file_def.parsed.tmdb_id)
+                            if id_type:
+                                break
+                        if id_type:
+                            break
+                    if id_type:
+                        break
+
+            if id_type:
+                api_key = _get_api_key()
+                if id_type == "tmdb":
+                    digits = re.search(r"\d+", id_value)
+                    movie_info = (
+                        _get_movie_info_by_tmdb_id(api_key, int(digits.group()))
+                        if digits
+                        else None
+                    )
+                else:
+                    movie_info = _get_movie_info_by_imdb_id(api_key, id_value)
+
+                if movie_info:
+                    title = (
+                        title
+                        or movie_info.get("original_title")
+                        or movie_info.get("title", "")
+                    )
+                    year = year or str(movie_info.get("release_date", ""))[:4]
+                    tmdb_id = tmdb_id or int(movie_info.get("id", 0) or 0)
+                    imdb_id = imdb_id or movie_info.get("imdb_id", "")
+
+        if not (title or year):
+            logger.warning(f"No movie info found for: {movie_folder}")
+            return None
+
+        for seasons in show_data["seasons"].values():
+            for episodes in seasons.values():
+                for file_def in episodes.values():
+                    if imdb_id:
+                        file_def.parsed.imdb_id = imdb_id
+                    if tmdb_id:
+                        file_def.parsed.tmdb_id = tmdb_id
+                    if title:
+                        file_def.parsed.show_name = title
+                    if year:
+                        file_def.parsed.year = year
+
+        return (title, year)
+
+    return None
+
+
 def fetch_episode_names_for_show(
     show_folder: str,
     organized: FileOrganization,
@@ -765,7 +901,7 @@ def fetch_episode_names_for_show(
                             tmdb_show_id = int(show_info["id"])
                             year = str(show_info.get("first_air_date", ""))[:4]
                             logger.info(
-                                f"Found IMDb id from parsed filename:"
+                                "Found IMDb id from parsed filename:"
                                 f" {parsed.imdb_id} (TMDB {tmdb_show_id})"
                             )
                     if tmdb_show_id:

@@ -100,6 +100,40 @@ episodes, etc.
 
 ---
 
+## Folder normalization (`--normalize-folders`)
+
+Renames the folder holding each movie/show to `Name (Year) {identifier}` (empty
+parts are omitted). Requires `--commit`, runs **before** the files are renamed,
+and works for movies as well as shows:
+
+```bash
+py -m main "C:\Movies" -r --commit --normalize-folders
+```
+
+```text
+1/aaa.2000.mkv            -> aaa (2000)/Aaa.2000.1080p.mkv              (style 1)
+2/bbb.2001.1080p...mkv    -> bbb (2001)/Bbb (2001) - [1080p][...].mkv   (style 2)
+```
+
+Rules:
+
+- **TV shows** (`--show` / `--anime`) are renamed when an identifier
+  (`{imdb-…}` / `{tmdb-…}`) is known, e.g. `Show.Name` → `Show Name {tmdb-123}`.
+- **Movies** (default) are renamed to `Movie Name (Year)`, using the year parsed
+  from the file name (or `movie.nfo`). When no year is known the folder is only
+  renamed if its current name is generic (`1`, `2`, `CD1`, `New folder`, …), so a
+  meaningful folder name is never replaced by a bare title.
+- The scanned folder itself is **never** renamed in movie mode, so a folder full
+  of loose movies is not renamed after one of them. Point at the parent folder to
+  normalize the movie folders inside it.
+- A folder that contains more than one movie is left alone (ambiguous).
+- Files inside a `Season xx` subfolder stay in that subfolder.
+- `--fetch-tmdb-for-normalize` additionally fills in title/year/ids while
+  normalizing: shows are looked up by name on TMDB, movies only by an id taken
+  from `movie.nfo`, the folder name or the file name (no name search).
+
+---
+
 ## Options
 
 | Option                                  | Description                                                                                      |
@@ -118,8 +152,8 @@ episodes, etc.
 | `--no-language`                         | Don't append language codes to subtitle names.                                                   |
 | `-v, --verbose`                         | Verbose (debug) logging.                                                                         |
 | `-f, --force-use-media-info`            | Re-read media info even when fields are parsed.                                                  |
-| `--normalize-folders`                   | Rename show folders to `Show Name {identifier}`.                                                 |
-| `--fetch-tmdb-for-normalize`            | Fetch TMDB info while normalizing folders.                                                       |
+| `--normalize-folders`                   | Rename folders to `Name (Year) {identifier}` (shows and movies).                                 |
+| `--fetch-tmdb-for-normalize`            | Fetch TMDB/nfo info (title, year, ids) while normalizing folders.                                |
 | `--[no-]export-episode-names`           | Write/parse `episode_names.txt` (default on).                                                    |
 | `--[no-]use-episode-names`              | Use `episode_names.txt` to fill titles (default on).                                             |
 | `--[no-]fetch-if-missing`               | Fetch from TMDB when no index exists (default on).                                               |

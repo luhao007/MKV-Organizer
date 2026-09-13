@@ -173,14 +173,18 @@ def main():
     parser.add_argument(
         "--normalize-folders",
         action="store_true",
-        help="Normalize folder names to 'Show Name {identifier}' format",
+        help=(
+            "Normalize folder names:\n"
+            "  TV Show: 'Show Name (Year) {identifier}'\n"
+            "  Movie:   'Movie Name (Year) {identifier}'"
+        ),
     )
     parser.add_argument(
         "--fetch-tmdb-for-normalize",
         action="store_true",
         help=(
-            "Fetch show info from TMDB when normalizing folders to enrich identifiers"
-            " and titles"
+            "Fetch title/id info from TMDB (and tvshow.nfo / movie.nfo) when"
+            " normalizing folders to enrich identifiers, titles and years"
         ),
     )
     args = parser.parse_args()
@@ -258,7 +262,10 @@ def main():
             from organizer import normalize_folders
 
             normalized_count = normalize_folders(
-                organized, fetch_tmdb=args.fetch_tmdb_for_normalize
+                organized,
+                fetch_tmdb=args.fetch_tmdb_for_normalize,
+                is_show=bool(is_show),
+                base_folder=folder,
             )
             if normalized_count:
                 logger.info(f"{normalized_count} folders have been normalized")
