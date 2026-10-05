@@ -48,6 +48,33 @@ Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4
   -> Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4 (style 1)
 ```
 
+#### Merged (multi-episode) files
+
+One file may contain **several** episodes. Both the exact chain and the range
+form are understood:
+
+| Marker         | Meaning                              |
+| -------------- | ------------------------------------ |
+| `S03E01E04`    | exactly episodes 1 **and** 4         |
+| `S01E01E02E03` | exactly episodes 1, 2 and 3          |
+| `S01E01.E02`   | exactly episodes 1 and 2             |
+| `S01E01-E04`   | the contiguous range episodes 1 to 4 |
+| `S01E01-04`    | the contiguous range episodes 1 to 4 |
+
+The marker is **kept as-is** in the new filename and every contained episode is
+looked up on TMDB, with the names joined by `&`:
+
+```
+The.Penguins.of.Madagascar.S03E01E04.Feline.Fervor.Action.Reaction.1080p.AMZN.WEB-DL.DDP2.0.x264-NTb.mkv
+  TMDB S03E01 = "Feline Fervor", S03E04 = "Action Reaction"
+  -> The.Penguins.of.Madagascar.S03E01E04.{tmdb-7869}.Feline.Fervor.&.Action.Reaction.1080p.AMZN.WEB-DL.x264.DDP2.0-NTb.mkv
+```
+
+Only stand-alone episode numbers are recognised: a resolution or another tag
+right behind the style separator (`Detective Conan S01E0469 - [1080p][H264].mkv`)
+is never read as the end of a range, and an implausibly long range is refused —
+so a file can never end up with a hundreds-of-episodes name.
+
 ### Anime (`--anime`)
 
 Anime releases usually have **one season** worth of episodes in a single
@@ -64,7 +91,8 @@ numbered episode:
 
 - The episode number is the **4-digit zero-padded number in the filename**
   (e.g. `0001`, `0123`). Short numbers are padded to 4 digits (`123` →
-  `0123`).
+  `0123`). A release-version suffix is accepted and dropped from the marker
+  (`Detective Conan - 1077v2 [1080p].zh.chs&jpn.ass` → episode `1077`).
 - Because a bare number is ambiguous (it could be a channel count, a CRC, …),
   the tool first scans **all files in the same folder** and picks the number
   that forms the _consecutive / incrementing_ sequence — the other numbers
@@ -170,6 +198,7 @@ Rules:
 ```
 Movie : Movie.Name.Year.1080p.HEVC.DV.WEB-DL.TrueHD.Atmos.7.1-GROUP.mkv
 TV    : Show.Name.S01E01.Title.1080p.HEVC.DV.WEB-DL.-GROUP.mkv
+Merged: Show.Name.S03E01E04.Joined.Titles.1080p.mkv
 Anime : Show.Name.0123.1080p.mkv          (with --anime-season: Show.Name.S01E0123.1080p.mkv)
 ```
 
@@ -178,6 +207,7 @@ Anime : Show.Name.0123.1080p.mkv          (with --anime-season: Show.Name.S01E01
 ```
 Movie : Movie Name (Year) [1080p][HEVC][DV][WEB-DL][TrueHD Atmos 7.1]-GROUP.mkv
 TV    : Show Name S01E01 - Title [1080p][HEVC][DV][WEB-DL]-GROUP.mkv
+Merged: Show Name S03E01E04 - Joined Titles [1080p][HEVC]-GROUP.mkv
 Anime : Show Name 0123 [1080p][HEVC]-GROUP.mkv
 ```
 
@@ -201,6 +231,27 @@ Titles are applied to parsed files and/or fetched from TMDB. Long-running
 anime is often split into many TMDB seasons, so episode numbers past the first
 season may simply not resolve to a title — the file will still be renamed
 without one.
+
+A fetch always stores the **complete episode list of every season found
+locally**, not just the episodes whose files exist. Missing episodes, merged
+files and files that failed to parse therefore do not shrink the index:
+
+```
+The Penguins of Madagascar
+03|01|Feline Fervor
+03|02|King Me
+03|03|The Otter Woman      <- not present locally, still indexed
+...
+03|33|The Penguin Who Loved Me
+```
+
+- Applying a merged file (`S03E01E04`) joins the names of _all_ episodes it
+  contains with `&` (`Feline Fervor & Action Reaction`).
+- A later run that only reads the index can not truncate it: entries already in
+  the file are kept and local episodes are only **added**. Use `--force-fetch`
+  to refresh everything from TMDB.
+- `--check-missing` compares the folder against this list, and a merged file
+  counts as covering each episode it contains.
 
 ### Identifiers (`{imdb-…}` / `{tmdb-…}`)
 

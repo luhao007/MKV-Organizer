@@ -326,8 +326,10 @@ def extract_channels(track: Track) -> str:
         return "5.1"
     elif channels == 2:
         return "2.0"
+    elif channels == 1:
+        return "1.0"
     else:
-        raise ValueError(f"Unknown AC-3 channel configuration: {channels}")
+        raise ValueError(f"Unknown audio channel configuration: {channels}")
 
 
 def extract_audio_codec(track: Track) -> str:
@@ -338,7 +340,8 @@ def extract_audio_codec(track: Track) -> str:
     - AAC -> AAC
     - AC-3 -> AC3
     - E-AC-3 -> EAC3
-    - DTS / DTS-HD -> DTS
+    - DTS -> DTS, DTS-HD -> DTS-HD, DTS-HD MA -> DTS-HD MA, DTS:X -> DTS-X
+    - PCM / LPCM -> PCM
     - FLAC -> FLAC
     - MP3 -> MP3
     - Opus -> Opus
@@ -347,7 +350,7 @@ def extract_audio_codec(track: Track) -> str:
     codec = _safe_extract_track_attribute(track, "codec")
     codec_id = _safe_extract_track_attribute(track, "codec_id")
     codec = codec or codec_id  # Some formats use codec_id instead of codec
-    commercial_name = _safe_extract_track_attribute(track, "commercial_name")
+    commercial_name = _safe_extract_track_attribute(track, "commercial_name").lower()
     fmt_info = _safe_extract_track_attribute(track, "format_info")
 
     if "aac" in fmt:
@@ -361,7 +364,9 @@ def extract_audio_codec(track: Track) -> str:
     elif any(x in fmt for x in ["ac-3", "ac3"]) or "ac3" in codec:
         ret = "DD"
     elif "dts" in fmt or "dts" in codec:
-        if "x" in commercial_name:
+        # Match DTS:X explicitly; a bare "x" check would also match unrelated
+        # commercial names such as "DTS Express".
+        if any(x in commercial_name for x in ["dts:x", "dts-x", "dtsx"]):
             ret = "DTS-X"
         elif "hd" in commercial_name:
             ret = "DTS-HD"
@@ -373,6 +378,9 @@ def extract_audio_codec(track: Track) -> str:
         ret = "TrueHD"
         if "fba" in fmt or "atmos" in commercial_name:
             ret += ".Atmos"
+    elif "pcm" in fmt or "pcm" in codec:
+        # Covers PCM / LPCM; the codec_id for PCM looks like "a_pcm/int/lit".
+        ret = "PCM"
     elif "opus" in fmt or "opus" in codec:
         ret = "Opus"
     elif "flac" in fmt or "flac" in codec:

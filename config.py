@@ -79,6 +79,10 @@ SOURCES: Final = [
     "BRRip",
     "DVD",
     "DVDRip",
+    "AI",
+    "Upscaled",
+    "R2SE",
+    "R2",
 ] + list(
     map(
         ".".join,
@@ -91,6 +95,10 @@ SOURCE_RENAME_MAPPINGS: Final = {
     "WEBRip": "WEB-DL",
     "WEBDL": "WEB-DL",
     "UHD.BluRay": "BluRay",
+    "AI": "AI",
+    "Upscaled": "AI",
+    "R2SE": "AI",
+    "R2": "AI",
 }
 
 PACKAGE: Final = ["INITIAL", "PROPER", "REPACK", "REMUX", "MULTI"]
@@ -109,6 +117,7 @@ _AUDIO_CODECS = [
     "DD",
     "AC3",
     "FLAC",
+    "PCM",
     "AAC",
     "MP3",
     "MP2",
@@ -134,6 +143,10 @@ EXTRA: Final = ["IMAX.Enhanced"]
 # Default filename for stored episode title mappings.
 EPISODE_NAME_FILE: Final = "episode_names.txt"
 
+# Separator used to join the names of the episodes contained in one merged
+# file, e.g. "Feline Fervor & Action Reaction" for ...S03E01E04....
+EPISODE_TITLE_SEPARATOR: Final = " & "
+
 META_FILES: Final = [
     "banner.jpg",
     "backdrop.jpg",
@@ -155,11 +168,31 @@ META_FILES: Final = [
 # Match season/episode patterns with separators.
 # Supports both: S01E10 and 3x07
 # Works with dots, spaces, underscores, hyphens as separators.
+# A merged (multi-episode) file is *anchored* on its first episode here; the
+# remaining episodes are read from the text following the match by
+# EPISODE_TAIL_PATTERN (e.g. "S03E01E04" -> season 03, episode 01, tail "E04").
 SEASON_EPISODE_PATTERN: Final = re.compile(
     r"(?i)(?:^|[.\s_-])*(?:"
     r"s(?P<season_s>\d{1,2})\.?e(?P<episode_s>\d{2,4})|"
     r"(?P<season_x>\d{1,2})x(?P<episode_x>\d{2,4})"
-    r")(?:$|[.\s_-])"
+    r")(?=$|[.\s_-]|[eE]\d)"
+)
+
+# Merged / multi-episode markers that directly follow the first episode marker:
+#   "E04"        -> exact second episode             (S03E01E04   = eps 1 and 4)
+#   "E04E05"     -> exact third/fourth episode       (S01E01E02E03)
+#   "-E04"/"-04" -> contiguous range                 (S01E01-E04  = eps 1 to 4)
+#
+# Every episode number must be a *stand-alone* token and the hyphen of the range
+# form may only be followed by spaces, an "e" and digits.  A dotted style
+# separator therefore never starts a range: the resolution in
+# "S01E0469 - [1080p][H264].mkv" (flattened: "S01E0469.-.1080p.H264.mkv") is
+# *not* the range 469-1080.
+EPISODE_TAIL_PATTERN: Final = re.compile(
+    r"(?i)^(?P<tail>"
+    r"-\s*[eE]?\d{2,4}(?![A-Za-z0-9])"
+    r"|(?:[.\s_-]*[eE]\d{2,4})+(?![A-Za-z0-9])"
+    r")"
 )
 
 # Match resolution (e.g., 1080p, 720p, 2160p)
@@ -184,7 +217,7 @@ WORD_SPLIT_PATTERN: Final = re.compile(r"[.\s_]+")
 WRAP_PATTERN: Final = re.compile(r"^([(\[]*)(.*?)([)\]]*)$")
 
 # Stopwords for title capitalization (keep lowercase except first word)
-STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an", "at"}
+STOPWORDS: Final = {"in", "as", "of", "the", "and", "or", "to", "a", "an", "at", "for"}
 
 # Some special words that should not be captalized
 SPECIALWORDS: Final = [

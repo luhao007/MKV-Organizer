@@ -211,6 +211,7 @@ def build_filename(
     release_group: str = "",
     anime: bool = False,
     anime_with_season: bool = False,
+    episodes: list[str] | None = None,
 ) -> str:
     """
     Build a standardized filename from components.
@@ -251,6 +252,9 @@ def build_filename(
         anime_with_season: Only meaningful when ``anime`` is True.  If True the
             ``SxxExx`` marker is written (e.g. ``S01E0123``); if False (the
             default) only the episode number is written.
+        episodes: Every episode number contained in the file, primary episode
+            first.  A merged release (e.g. ``S03E01E04``) keeps all of them in
+            the marker (``S03E01E04``); when omitted only ``episode`` is used.
 
     Returns:
         Formatted filename string (without extension).
@@ -258,6 +262,13 @@ def build_filename(
     Raises:
         ValueError: If ``style`` is not 1 or 2.
     """
+    episode_list = [ep for ep in episodes or [] if ep]
+    if not episode_list and episode:
+        episode_list = [episode]
+    marker = ""
+    if season and episode_list:
+        marker = f"S{season}" + "".join(f"E{num}" for num in episode_list)
+
     metas = [
         format_resolution(resolution),
         format_known(source, SOURCES, SOURCE_RENAME_MAPPINGS, style=style),
@@ -281,9 +292,9 @@ def build_filename(
                 parts.append(identifier)
             if title:
                 parts.append(format_title(title, style))
-        elif season and episode:
-            # show
-            parts.append(f"S{season}E{episode}")
+        elif marker:
+            # show (one or more episodes, e.g. "S03E01E04")
+            parts.append(marker)
             if identifier:
                 parts.append(identifier)
             if title:
@@ -306,11 +317,11 @@ def build_filename(
                 filename += f" - {format_title(title, 2)} "
             else:
                 filename += " "
-        elif season and episode:
-            # show
+        elif marker:
+            # show (one or more episodes, e.g. "S03E01E04")
             if identifier:
                 filename += f" {identifier}"
-            filename += f" S{season}E{episode}"
+            filename += f" {marker}"
             filename += " - "
             if title:
                 filename += f"{format_title(title, 2)} "

@@ -1,13 +1,17 @@
 """Unit tests for tmdb.py functions (with HTTP mocking)."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, mock_open, patch
 
-from models import FileDefinition, ParsedFileInfo
+from config import EPISODE_NAME_FILE
+from models import FileDefinition, FileOrganization, ParsedFileInfo
 from tmdb import (
     _find_episode_name,
     _parse_nfo_xml,
     _tmdb_get,
+    build_episode_title,
     extract_id_from_folder_name,
+    fetch_episode_names_for_show,
     fetch_title_and_ids_for_movie,
     search_show_by_name,
 )
@@ -43,6 +47,144 @@ class TestFindEpisodeName:
     def test_empty_name_returns_none(self):
         episodes = [{"episode_number": 1, "name": ""}]
         assert _find_episode_name(episodes, 1) is None
+
+
+# ============================================================================
+# build_episode_title (merged multi-episode files)
+# ============================================================================
+
+
+class TestBuildEpisodeTitle:
+    EPISODES = [
+        {"episode_number": 1, "name": "Feline Fervor"},
+        {"episode_number": 2, "name": "King Me"},
+        {"episode_number": 4, "name": "Action Reaction"},
+    ]
+
+    def test_single_episode(self):
+        assert build_episode_title(self.EPISODES, ["02"]) == "King Me"
+
+    def test_merged_episodes_are_joined(self):
+        assert (
+            build_episode_title(self.EPISODES, ["01", "04"])
+            == "Feline Fervor & Action Reaction"
+        )
+
+    def test_unknown_episode_is_skipped(self):
+        assert build_episode_title(self.EPISODES, ["01", "99"]) == "Feline Fervor"
+
+    def test_no_match_returns_empty(self):
+        assert build_episode_title(self.EPISODES, ["99"]) == ""
+
+    def test_duplicate_names_are_collapsed(self):
+        """A title already holding the joined name must round-trip unchanged."""
+        episodes = [
+            {"episode_number": 1, "name": "Feline Fervor & Action Reaction"},
+            {"episode_number": 4, "name": "Feline Fervor & Action Reaction"},
+        ]
+        assert (
+            build_episode_title(episodes, ["01", "04"])
+            == "Feline Fervor & Action Reaction"
+        )
+
+    def test_invalid_number_returns_empty(self):
+        assert build_episode_title(self.EPISODES, [""]) == ""
+
+
+# ============================================================================
+# fetch_episode_names_for_show (merged files + full season index)
+# ============================================================================
+
+
+def _merged_show_organization(folder: str) -> FileOrganization:
+    """One merged file (S03E01E04) whose parsed info carries the TMDB id."""
+    parsed = ParsedFileInfo(
+        show_name="The Penguins of Madagascar",
+        season="03",
+        episode="01",
+        episodes=["01", "04"],
+        title="",
+        extension="mkv",
+        tmdb_id=7869,
+    )
+    file_def = FileDefinition(
+        parsed=parsed,
+        folder=folder,
+        filename=f"{folder}/Show.S03E01E04.1080p.mkv",
+        is_media=True,
+    )
+    return {
+        "The Penguins of Madagascar": {
+            "folder": folder,
+            "seasons": {"03": {"01": {"mkv": file_def}}},
+        }
+    }
+
+
+def _season_three_episodes() -> list[dict[str, object]]:
+    return [
+        {"episode_number": 1, "name": "Feline Fervor"},
+        {"episode_number": 2, "name": "King Me"},
+        {"episode_number": 3, "name": "The Otter Woman"},
+        {"episode_number": 4, "name": "Action Reaction"},
+    ]
+
+
+class TestFetchEpisodeNamesForShow:
+    def _file_def(self, organized: FileOrganization) -> FileDefinition:
+        return organized["The Penguins of Madagascar"]["seasons"]["03"]["01"]["mkv"]
+
+    def test_merged_file_title_and_full_season_index(self, tmp_path: Path):
+        folder = str(tmp_path)
+        organized = _merged_show_organization(folder)
+
+        with (
+            patch("tmdb._get_api_key", return_value="key"),
+            patch(
+                "tmdb._get_show_info_by_tmdb_id",
+                return_value={"name": "Show", "first_air_date": "2008-11-28"},
+            ),
+            patch(
+                "tmdb._get_season_episodes",
+                return_value=_season_three_episodes(),
+            ),
+        ):
+            result = fetch_episode_names_for_show(folder, organized)
+
+        assert result is True
+        parsed = self._file_def(organized).parsed
+        assert parsed.title == "Feline Fervor & Action Reaction"
+        assert parsed.tmdb_id == 7869
+        assert parsed.year == "2008"
+
+        # The index holds every episode of the fetched season, even though only
+        # the merged file (episodes 1 and 4) exists locally.
+        index_text = (tmp_path / EPISODE_NAME_FILE).read_text(encoding="utf-8")
+        assert index_text.splitlines() == [
+            "The Penguins of Madagascar",
+            "03|01|Feline Fervor",
+            "03|02|King Me",
+            "03|03|The Otter Woman",
+            "03|04|Action Reaction",
+        ]
+
+    def test_season_fetch_failure_writes_nothing(self, tmp_path: Path):
+        folder = str(tmp_path)
+        organized = _merged_show_organization(folder)
+
+        with (
+            patch("tmdb._get_api_key", return_value="key"),
+            patch("tmdb._get_show_info_by_tmdb_id", return_value={"name": "Show"}),
+            patch("tmdb._get_season_episodes", return_value=None),
+        ):
+            result = fetch_episode_names_for_show(folder, organized)
+
+        assert result is False
+        assert not (tmp_path / EPISODE_NAME_FILE).exists()
+        assert self._file_def(organized).parsed.title == ""
+
+    def test_empty_organization_returns_false(self, tmp_path: Path):
+        assert fetch_episode_names_for_show(str(tmp_path), {}) is False
 
 
 # ============================================================================

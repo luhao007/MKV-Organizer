@@ -3,13 +3,14 @@
 import os
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Final, Optional
 
 import httpx
 
 from config import EPISODE_NAME_FILE
-from models import FileDefinition, FileOrganization
+from models import FileDefinition, FileOrganization, join_episode_titles
 from utils import get_logger
 
 logger = get_logger(__name__)
@@ -71,6 +72,35 @@ def _find_episode_name(
             if ep_name:
                 return ep_name
     return None
+
+
+def build_episode_title(
+    episodes: list[dict[str, Any]], episode_numbers: Iterable[str]
+) -> str:
+    """Build a file title from the names of the episodes it contains.
+
+    A merged release holds several episodes (e.g. ``S03E01E04`` = episodes 1
+    and 4), so its title is every contained episode name joined with ``" & "``
+    (``"Feline Fervor & Action Reaction"``).  A normal single-episode file
+    simply gets that episode's name.
+
+    Args:
+        episodes: TMDB episode dicts of one season.
+        episode_numbers: Episode numbers contained in the file, in order.
+
+    Returns:
+        Joined title, or ``""`` when no name could be resolved.
+    """
+    names: list[str] = []
+    for number in episode_numbers:
+        try:
+            episode_num = int(number)
+        except (TypeError, ValueError):
+            continue
+        name = _find_episode_name(episodes, episode_num)
+        if name and name not in names:
+            names.append(name)
+    return join_episode_titles(names)
 
 
 def _search_show(api_key: str, show_name: str) -> Optional[dict[str, str | int]]:
@@ -312,12 +342,14 @@ def fetch_episode_names_batch(
                 )
                 continue
 
-            # Find the matching episode and update title
-            ep_name = _find_episode_name(episodes_for_season, episode_num)
-            if ep_name:
-                file_def.parsed.title = ep_name
+            # Find the contained episode(s) and update the title
+            title = build_episode_title(
+                episodes_for_season, file_def.parsed.all_episodes
+            )
+            if title:
+                file_def.parsed.title = title
                 logger.debug(
-                    f"Updated S{season_num:02d}E{episode_num:02d} title: {ep_name}"
+                    f"Updated S{season_num:02d}E{episode_num:02d} title: {title}"
                 )
                 updated_any = True
 
@@ -392,9 +424,14 @@ def fetch_and_save_episode_names(
                     if show not in show_data:
                         show_data[show] = {}
 
-                    key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
-                    if file_def.parsed.title and key not in show_data[show]:
-                        show_data[show][key] = file_def.parsed.title
+                    # A merged file covers several episodes; index each of them.
+                    for episode_number in file_def.parsed.all_episodes:
+                        key = (
+                            f"{file_def.parsed.season.zfill(2)}|"
+                            f"{episode_number.zfill(2)}"
+                        )
+                        if file_def.parsed.title and key not in show_data[show]:
+                            show_data[show][key] = file_def.parsed.title
 
     if not show_data:
         logger.warning("No parsed episode data found to save")
@@ -808,12 +845,19 @@ def fetch_episode_names_for_show(
     3. Then reuses an id parsed from the file names (e.g. "{tmdb-12345}")
     4. Finally uses show name from organized dict
 
+    Every episode of the fetched seasons is applied to the local files (a
+    merged file such as ``S03E01E04`` gets all of its episode names joined with
+    ``" & "``) and the *complete* episode list of those seasons is written to
+    ``episode_names.txt``, so later runs no longer depend on which episodes are
+    present locally.
+
     Args:
         show_folder: Path to the show folder
         organized: FileOrganization dict for this show folder
 
     Returns:
-        True if episode names were fetched and updated, False otherwise.
+        True if episode data was fetched (titles applied and/or the episode name
+        index saved), False otherwise.
     """
     if not organized:
         return False
@@ -955,7 +999,6 @@ def fetch_episode_names_for_show(
 
                 try:
                     season_num = int(file_def.parsed.season)
-                    episode_num = int(file_def.parsed.episode)
                 except ValueError:
                     continue
 
@@ -963,49 +1006,51 @@ def fetch_episode_names_for_show(
                 if not episodes_for_season:
                     continue
 
-                # Find matching episode
-                for ep in episodes_for_season:
-                    if int(ep.get("episode_number", 0)) == episode_num:
-                        ep_name = ep.get("name", "")
-                        if ep_name:
-                            file_def.parsed.title = ep_name
-                            file_def.parsed.tmdb_id = tmdb_show_id
-                            if year:
-                                file_def.parsed.year = year
-                            logger.debug(
-                                f"Updated S{season_num:02d}E{episode_num:02d} title:"
-                                f" {ep_name}"
-                            )
-                            updated_any = True
-                        break
+                # Find the contained episode(s) - a merged file covers several
+                # (e.g. "S03E01E04") and gets all their names joined.
+                title = build_episode_title(
+                    episodes_for_season, file_def.parsed.all_episodes
+                )
+                if title:
+                    file_def.parsed.title = title
+                    file_def.parsed.tmdb_id = tmdb_show_id
+                    if year:
+                        file_def.parsed.year = year
+                    logger.debug(
+                        f"Updated S{season_num:02d}"
+                        f"E{'E'.join(file_def.parsed.all_episodes)} title: {title}"
+                    )
+                    updated_any = True
 
                 if file_def.parsed.show_name != show_name:
                     file_def.parsed.show_name = show_name
 
     # ── Step 5: Save episode_names.txt ────────────────────────────────
-    if updated_any:
+    # The *complete* episode list of every fetched season is stored, not only
+    # the episodes that exist locally.  A local file may cover several episodes
+    # (merged release) or be missing entirely, and the index must still allow
+    # resolving the names of every episode of the season later on.
+    if seasons_cache:
         index_path = Path(show_folder) / EPISODE_NAME_FILE
         try:
+            written: set[str] = set()
             with index_path.open("w", encoding="utf-8") as f:
                 f.write(show_name + "\n")
 
-                # Collect all episode titles
-                episodes_map: dict[str, str] = {}
-                for season_files in organized[show_name]["seasons"].values():
-                    for episode_files in season_files.values():
-                        for file_def in episode_files.values():
-                            if not file_def.is_subtitle and file_def.parsed.title:
-                                key = f"{file_def.parsed.season.zfill(2)}|{file_def.parsed.episode.zfill(2)}"
-                                if key not in episodes_map:
-                                    episodes_map[key] = file_def.parsed.title
-
-                # Write sorted episode list
-                for key in sorted(episodes_map.keys()):
-                    season, episode = key.split("|")
-                    f.write(f"{season}|{episode}|{episodes_map[key]}\n")
+                for season_num in sorted(seasons_cache):
+                    for ep in seasons_cache[season_num]:
+                        ep_name = ep.get("name", "")
+                        if not ep_name:
+                            continue
+                        key = f"{season_num:02d}|{int(ep.get('episode_number', 0)):02d}"
+                        if key in written:
+                            continue
+                        written.add(key)
+                        season, episode = key.split("|")
+                        f.write(f"{season}|{episode}|{ep_name}\n")
 
             logger.info(f"Saved episode names to: {index_path}")
         except Exception as e:
             logger.error(f"Error saving episode_names.txt: {e}")
 
-    return updated_any
+    return updated_any or bool(seasons_cache)

@@ -6,7 +6,7 @@ import pytest
 
 class TestScenario(TypedDict):
     filename: str
-    expected: dict[str, str | list[str]]
+    expected: dict[str, str | int | list[str] | None]
     is_show: NotRequired[bool]  # Default to True
 
 
@@ -387,6 +387,20 @@ def test_detect_anime_single_file():
     }
 
 
+def test_anime_version_suffix_number():
+    """A "v2" release version must not hide the episode number."""
+    files = [
+        "[Erai-raws] Detective Conan - 1077 [1080p][C2452D52].mkv",
+        "[Erai-raws] Detective Conan - 1077v2 [1080p].zh.chs&jpn.ass",
+    ]
+    detected = detect_anime_episode_numbers(files)
+    assert detected == {files[0]: "1077", files[1]: "1077"}
+
+    parsed = parse_filename(files[1], is_anime=True, anime_episode="1077")
+    assert (parsed.season, parsed.episode) == ("01", "1077")
+    assert parsed.lang == "zh.chs"
+
+
 def test_detect_anime_empty_and_undetectable():
     assert detect_anime_episode_numbers([]) == {}
     assert detect_anime_episode_numbers(["Some Show.mkv"]) == {}
@@ -459,3 +473,140 @@ def test_identifier_is_not_part_of_show_name(name: str, case: TestScenario):
     assert "{" not in parsed.show_name
     assert "db-" not in parsed.show_name
 
+
+# ============================================================================
+# Merged (multi-episode) files
+# ============================================================================
+
+
+MERGED_EPISODE_TEST_CASES: Final[TestScenarios] = {
+    "chain_of_two": {
+        # The Penguins of Madagascar pairs two 11-minute segments per file;
+        # "S03E01E04" holds TMDB episodes 1 ("Feline Fervor") and 4
+        # ("Action Reaction").
+        "filename": (
+            "The.Penguins.of.Madagascar.S03E01E04.Feline.Fervor.Action.Reaction."
+            "1080p.AMZN.WEB-DL.DDP2.0.x264-NTb.mkv"
+        ),
+        "expected": {
+            "show_name": "The Penguins of Madagascar",
+            "season": "03",
+            "episode": "01",
+            "episodes": ["01", "04"],
+            "title": "Feline Fervor Action Reaction",
+            "resolution": "1080p",
+            "source": "AMZN.WEB-DL",
+            "codec": "x264",
+            "release_group": "NTb",
+        },
+    },
+    "chain_of_three": {
+        "filename": "Show.S01E01E02E03.1080p.HEVC.mkv",
+        "expected": {
+            "show_name": "Show",
+            "season": "01",
+            "episode": "01",
+            "episodes": ["01", "02", "03"],
+            "title": "",
+        },
+    },
+    "dotted_chain": {
+        "filename": "Show.S01E01.E02.1080p.HEVC.mkv",
+        "expected": {"season": "01", "episode": "01", "episodes": ["01", "02"]},
+    },
+    "range_with_e": {
+        "filename": "Show.S01E01-E04.1080p.HEVC.mkv",
+        "expected": {
+            "season": "01",
+            "episode": "01",
+            "episodes": ["01", "02", "03", "04"],
+            "resolution": "1080p",
+        },
+    },
+    "range_without_e": {
+        "filename": "Show.S01E01-04.1080p.HEVC.mkv",
+        "expected": {
+            "season": "01",
+            "episode": "01",
+            "episodes": ["01", "02", "03", "04"],
+        },
+    },
+    "backwards_range_stays_single": {
+        "filename": "Show.S01E05-02.1080p.HEVC.mkv",
+        "expected": {
+            "season": "01",
+            "episode": "05",
+            "episodes": None,
+            "title": "02",
+        },
+    },
+    "resolution_after_style_separator_is_not_a_range": {
+        # "S01E0469 - [1080p]..." flattens to "S01E0469.-.1080p...": the
+        # resolution must never be read as the end of the range 469-1080.
+        "filename": "Detective Conan S01E0469 - [1080p][H264][SDR][AAC 2.0].nfo",
+        "expected": {
+            "season": "01",
+            "episode": "0469",
+            "episodes": None,
+            "title": "",
+            "resolution": "1080p",
+        },
+    },
+    "titled_style2_episode_is_not_a_range": {
+        "filename": (
+            "Detective Conan S01E0469 - Phantom Thief Kid and the 4 Masterpieces"
+            " (1) [1080p][H264][SDR][AAC 2.0].nfo"
+        ),
+        "expected": {
+            "season": "01",
+            "episode": "0469",
+            "episodes": None,
+            "title": "Phantom Thief Kid and the 4 Masterpieces (1)",
+            "resolution": "1080p",
+        },
+    },
+    "implausibly_long_range_is_refused": {
+        # A 600-episode "range" is a misread, not a real multi-episode file.
+        "filename": "Show.S01E01-1080.1080p.HEVC.mkv",
+        "expected": {
+            "season": "01",
+            "episode": "01",
+            "episodes": None,
+            "title": "1080",
+        },
+    },
+    "single_episode_has_no_list": {
+        "filename": "Better.Call.Saul.S01E10.Marco.1080p.x265-RARBG.mp4",
+        "expected": {"episode": "10", "episodes": None, "title": "Marco"},
+    },
+    "release_group_after_marker_is_not_an_episode": {
+        "filename": "Show.S01E01-RARBG.mkv",
+        "expected": {"episode": "01", "episodes": None, "release_group": "RARBG"},
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "name,case",
+    MERGED_EPISODE_TEST_CASES.items(),
+    ids=MERGED_EPISODE_TEST_CASES.keys(),
+)
+def test_merged_episode_patterns(name: str, case: TestScenario):
+    parsed = parse_filename(case["filename"], case.get("is_show", True))
+    for field, value in case["expected"].items():
+        assert getattr(parsed, field) == value
+
+
+def test_all_episodes_property():
+    """``all_episodes`` always lists every episode, primary one first."""
+    merged = parse_filename("Show.S03E01E04.Feline.Fervor.Action.Reaction.1080p.mkv")
+    assert merged.is_multi_episode is True
+    assert merged.all_episodes == ["01", "04"]
+
+    single = parse_filename("Better.Call.Saul.S01E10.Marco.1080p.mkv")
+    assert single.is_multi_episode is False
+    assert single.all_episodes == ["10"]
+
+    movie = parse_filename("Inception.2010.1080p.mkv", is_show=False)
+    assert movie.is_multi_episode is False
+    assert movie.all_episodes == []

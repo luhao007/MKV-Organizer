@@ -6,14 +6,18 @@ import traceback
 from formatter import build_filename, normalize_illegal_chars
 from parser import detect_anime_episode_numbers, parse_filename
 from pathlib import Path
-from typing import Callable, Generator, Iterable, Optional
+from typing import Callable, Final, Generator, Iterable, Optional
 
 from config import EPISODE_NAME_FILE, LANGUAGES, META_FILES, VIDEO_FORMATS
 from media_info import extract_media_info
-from models import FileDefinition, FileOrganization, ShowData
+from models import FileDefinition, FileOrganization, ShowData, join_episode_titles
 from utils import get_logger
 
 logger = get_logger(__name__)
+
+# Windows/DOS file systems limit a single name component (file or folder name)
+# to 255 characters.  Longer names are refused instead of failing the rename.
+MAX_FILENAME_LENGTH: Final = 255
 
 
 # ============================================================================
@@ -131,6 +135,25 @@ def build_season_episode_key(season: str, episode: str) -> str:
     return f"{season}|{episode}"
 
 
+def normalize_number(number: str) -> str:
+    """Normalize a season/episode number to the ``episode_names.txt`` form.
+
+    Numbers are compared as integers and zero-padded to 2 digits (``"3"`` and
+    ``"03"`` both become ``"03"``), so an index written from one source (TMDB)
+    matches a file parsed from another (``"S03E3"``).  Returns ``""`` for
+    values that are not numbers.
+    """
+    try:
+        return str(int(number)).zfill(2)
+    except (TypeError, ValueError):
+        return ""
+
+
+def build_episode_key(season: str, episode: str) -> str:
+    """Build a normalized ``SS|EE`` key for one episode."""
+    return build_season_episode_key(normalize_number(season), normalize_number(episode))
+
+
 def parse_season_episode_key(key: str) -> tuple[str, str]:
     """Parse season/episode key back into components."""
     parts = key.split("|")
@@ -218,6 +241,12 @@ def write_episode_name_index(
     """
     Write episode_names.txt files for each show folder.
 
+    An existing index is **merged**, never replaced: entries that are already
+    known (typically the complete TMDB list written by a fetch) are kept and
+    only episodes that are missing from it are added from the parsed files.
+    That way a later run without TMDB access can not truncate the index back to
+    the episodes that happen to exist locally.
+
     Args:
         folder: Parent folder (for compatibility, not used directly)
         organized: FileOrganization dict with show data
@@ -243,7 +272,10 @@ def write_episode_name_index(
             logger.debug(f"Skipping {show_folder} - already written by fetch")
             continue
 
+        index_path = Path(show_folder) / EPISODE_NAME_FILE
         mappings: dict[str, str] = {}
+        if index_path.exists():
+            mappings = load_episode_name_index(show_folder)
         mappings["name"] = show_name
 
         for season, episodes in seasons.items():
@@ -257,18 +289,22 @@ def write_episode_name_index(
                 if not parsed.title:
                     continue
 
-                key = build_season_episode_key(parsed.season, parsed.episode)
-                mappings[key] = parsed.title
+                # A merged file covers several episodes; list each of them so
+                # the index stays complete (check-missing, re-apply).
+                for episode_number in parsed.all_episodes:
+                    key = build_episode_key(parsed.season, episode_number)
+                    # Skip unparseable numbers and keep already known names.
+                    if key == "|" or key in mappings:
+                        continue
+                    mappings[key] = parsed.title
 
         if not mappings:
             logger.debug(f"No episode names to write for {show_name}")
             continue
 
-        index_path = Path(show_folder) / EPISODE_NAME_FILE
-        if index_path.exists():
-            index = load_episode_name_index(show_folder)
-            if index == mappings:
-                continue
+        # Nothing new to add -> keep the existing file untouched.
+        if index_path.exists() and load_episode_name_index(show_folder) == mappings:
+            continue
         try:
             with index_path.open("w", encoding="utf-8") as file:
                 file.write(show_name)
@@ -323,25 +359,26 @@ def apply_episode_names_from_file(
             if file_def.is_subtitle:
                 continue
 
-            # Build key for lookup
-            try:
-                season_str = str(int(file_def.parsed.season)).zfill(2)
-                episode_str = str(int(file_def.parsed.episode)).zfill(2)
-            except (ValueError, TypeError):
+            parsed = file_def.parsed
+            if not normalize_number(parsed.season) or not parsed.all_episodes:
                 logger.warning(
-                    "Invalid season/episode:"
-                    f" {file_def.parsed.season}/{file_def.parsed.episode}"
+                    f"Invalid season/episode: {parsed.season}/{parsed.episode}"
                 )
                 continue
 
-            key = build_season_episode_key(season_str, episode_str)
+            # A merged file (e.g. "S03E01E04") is titled with the names of all
+            # episodes it contains, joined by " & ".
+            title = join_episode_titles(
+                index.get(build_episode_key(parsed.season, number), "")
+                for number in parsed.all_episodes
+            )
 
             # Apply episode name if found and not already set
-            if key in index and file_def.parsed.title != index[key]:
-                file_def.parsed.title = index[key]
+            if title and parsed.title != title:
+                parsed.title = title
                 logger.debug(
-                    "Applied episode name from file: "
-                    f"S{season_str}E{episode_str} - {index[key]}"
+                    "Applied episode name from file:"
+                    f" S{parsed.season}E{'E'.join(parsed.all_episodes)} - {title}"
                 )
                 applied_any = True
 
@@ -551,8 +588,13 @@ def organize_files(
                 parsed = parse_filename(filename, is_show=is_show)
             parsed_count += 1
         except BaseException as e:
-            logger.error(f"Skipping {filename}: {e}")
-            traceback.print_exc()
+            if isinstance(e, ValueError):
+                # A file we simply cannot place (e.g. a special without any
+                # episode number) - a single line is enough.
+                logger.warning(f"Skipping {filename}: {e}")
+            else:
+                logger.error(f"Skipping {filename}: {e}")
+                traceback.print_exc()
             skipped_count += 1
             continue
 
@@ -647,11 +689,27 @@ def organize_files(
                 }
 
         # Add file to seasons structure
-        organized[show_name]["seasons"].setdefault(season, {}).setdefault(episode, {})[
-            ext
-        ] = file_def
+        season_episodes = organized[show_name]["seasons"].setdefault(season, {})
+        episode_files = season_episodes.setdefault(episode, {})
+        if ext in episode_files:
+            # Two files sharing the first episode but covering a different set
+            # of episodes (e.g. "S03E01.mkv" next to "S03E01E04.mkv") can not be
+            # grouped together; warn instead of silently dropping one.
+            existing = episode_files[ext]
+            if existing.parsed.all_episodes != parsed.all_episodes:
+                logger.warning(
+                    f"Conflicting episode coverage for '{existing.filename}' and"
+                    f" '{full_path}' (both S{season}E{episode}); only the last"
+                    " one is kept"
+                )
+        episode_files[ext] = file_def
 
     logger.debug(f"Scan complete: {parsed_count} parsed, {skipped_count} skipped")
+    if skipped_count:
+        logger.warning(
+            f"{skipped_count} file(s) in '{folder}' were skipped - no episode"
+            " number could be found (they are left untouched)"
+        )
     return organized
 
 
@@ -751,7 +809,8 @@ def find_best_audio_codec(audio_codecs: Iterable[str] | None) -> str:
     Select the highest-quality audio codec from a list.
 
     Priority order (highest first):
-    TrueHD > DTS-X > Atmos > DTS > FLAC > DDP > DD > AC3 > AAC.
+    TrueHD > DTS-X > DTS-HD MA > DTS-HD > Atmos > DTS > FLAC > PCM
+    > DDP > EAC3 > DD > AC3 > AAC.
 
     Args:
         audio_codecs: Iterable of audio codec strings (may be None).
@@ -762,13 +821,19 @@ def find_best_audio_codec(audio_codecs: Iterable[str] | None) -> str:
     if not audio_codecs:
         return ""
 
-    # Return the best audio codec if we have multiple
+    # Return the best audio codec if we have multiple.
+    # More specific DTS variants must come before the generic "DTS" entry,
+    # otherwise "DTS" substring-matches "DTS-HD MA.5.1" as well as "DTS.2.0"
+    # and can pick the lower-quality track depending on set iteration order.
     best_codecs = [
         "TrueHD",
         "DTS-X",
+        "DTS-HD MA",
+        "DTS-HD",
         "Atmos",
         "DTS",
         "FLAC",
+        "PCM",
         "DDP",
         "EAC3",
         "DD",
@@ -822,6 +887,7 @@ def build_new_filename(
         show_name=parsed.show_name,
         season=parsed.season,
         episode=parsed.episode,
+        episodes=parsed.all_episodes,
         title=parsed.title,
         year=parsed.year,
         edition=parsed.edition,
@@ -911,10 +977,21 @@ def rename_files(
                 ren_count += 1
 
                 if not dry_run:
+                    if len(new_filename) > MAX_FILENAME_LENGTH:
+                        logger.error(
+                            f"Not renaming {Path(file_def.filename).name}: the new"
+                            f" name is {len(new_filename)} characters long, which"
+                            " exceeds the file system limit"
+                        )
+                        continue
                     try:
                         os.rename(file_def.filename, new_path)
-                    except OSError as e:
-                        logger.error(f"Failed to rename {file_def.filename}: {e}")
+                    except Exception as e:
+                        # One bad file must not abort the whole run.
+                        logger.error(
+                            f"Failed to rename {file_def.filename}: "
+                            f"{type(e).__name__}: {e}"
+                        )
 
     apply_to_all_episodes(organized, process_episode)
     return ren_count
@@ -923,16 +1000,20 @@ def rename_files(
 def check_missing(
     organized: FileOrganization,
     episode_name_index: dict[str, str],
-):
+) -> set[str]:
     """
     Check for missing episodes by comparing organized files against an episode index.
 
     Logs the show name and any episodes present in the index but absent from
-    the organized structure.
+    the organized structure.  A merged file (e.g. ``S03E01E04``) counts as
+    covering every episode it contains.
 
     Args:
         organized: FileOrganization structure from organize_files().
         episode_name_index: Dict from load_episode_name_index() with expected episodes.
+
+    Returns:
+        Set of ``SS|EE`` keys that are in the index but not present on disk.
     """
     missing: set[str] = episode_name_index.keys() - set(["name"])
 
@@ -945,8 +1026,10 @@ def check_missing(
     ):
         for file_def in get_all_episode_files(episode_files):
             if not file_def.is_subtitle:
-                key = build_season_episode_key(season, episode)
-                missing.discard(key)
+                # A merged file covers every episode it contains, so all of
+                # them count as present.
+                for episode_number in file_def.parsed.all_episodes:
+                    missing.discard(build_episode_key(season, episode_number))
 
     apply_to_all_episodes(organized, process_episode)
 
@@ -956,6 +1039,8 @@ def check_missing(
             logger.info(f"Missing episodes: {sorted(missing)}")
         else:
             logger.info("No missing episodes detected")
+
+    return missing
 
 
 def check_low_resolution(

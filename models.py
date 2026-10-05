@@ -1,7 +1,10 @@
 """Data models for video file information and metadata."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Optional, TypedDict
+
+from config import EPISODE_TITLE_SEPARATOR
 
 
 @dataclass
@@ -13,6 +16,10 @@ class ParsedFileInfo:
     season: str
     episode: str
     title: str
+    # All episode numbers of a merged (multi-episode) file, primary episode
+    # first (e.g. "S03E01E04" -> ["01", "04"]).  ``None``/empty means the file
+    # holds exactly one episode (``episode``).
+    episodes: list[str] | None = None
 
     # Media infos
     resolution: str = ""
@@ -32,6 +39,41 @@ class ParsedFileInfo:
     release_group: str = ""
     original_filename: str = ""
     extension: str = ""
+
+    @property
+    def all_episodes(self) -> list[str]:
+        """All episode numbers contained in this file, primary episode first.
+
+        A merged file (``"S03E01E04"``) holds several episodes, a normal file
+        exactly one.  Returns an empty list when no episode is known at all
+        (e.g. movies).
+        """
+        if self.episodes:
+            return list(self.episodes)
+        return [self.episode] if self.episode else []
+
+    @property
+    def is_multi_episode(self) -> bool:
+        """True when this file contains more than one episode."""
+        return len(self.all_episodes) > 1
+
+
+def join_episode_titles(titles: Iterable[str]) -> str:
+    """Combine the episode names of one file into a single title.
+
+    A merged file (e.g. ``S03E01E04``) covers several episodes, so its title is
+    the individual episode names joined with ``" & "``
+    (``"Feline Fervor & Action Reaction"``).
+
+    Duplicate names are collapsed: when a title that already holds the joined
+    name is stored per episode in ``episode_names.txt`` and read back, the join
+    stays identical instead of repeating itself.
+    """
+    unique: list[str] = []
+    for title in titles:
+        if title and title not in unique:
+            unique.append(title)
+    return EPISODE_TITLE_SEPARATOR.join(unique)
 
 
 @dataclass

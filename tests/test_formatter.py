@@ -365,3 +365,47 @@ class TestBuildFilename:
         )
         assert "Detective Conan S01E0123" in result
         assert "[1080p]" in result
+
+    def test_style_1_merged_episodes_marker(self):
+        result = build_filename(
+            style=1,
+            show_name="The Penguins of Madagascar",
+            season="03",
+            episode="01",
+            episodes=["01", "04"],
+            title="Feline Fervor & Action Reaction",
+            resolution="1080p",
+            codec="x264",
+            source="AMZN.WEB-DL",
+            release_group="NTb",
+        )
+        assert result.startswith("The.Penguins.of.Madagascar.S03E01E04")
+        assert "Feline.Fervor.&.Action.Reaction" in result
+        assert result.endswith("-NTb")
+
+    def test_style_2_merged_episodes_marker(self):
+        result = build_filename(
+            style=2,
+            show_name="The Penguins of Madagascar",
+            season="03",
+            episode="01",
+            episodes=["01", "04"],
+            title="Feline Fervor & Action Reaction",
+            resolution="1080p",
+        )
+        assert "The Penguins of Madagascar S03E01E04" in result
+        assert "[1080p]" in result
+
+    def test_merged_episodes_falls_back_to_episode(self):
+        """``episodes`` is optional; ``episode`` alone still works."""
+        for episodes in (None, []):
+            result = build_filename(
+                style=1,
+                show_name="Show",
+                season="03",
+                episode="01",
+                episodes=episodes,
+                title="",
+            )
+            assert "S03E01" in result
+            assert "S03E01E" not in result

@@ -7,14 +7,19 @@ are tested with mock Track objects.
 # This is a unit test file, private functions are imported and tested directly
 # pyright: reportPrivateUsage=false
 
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from pymediainfo import Track
 
 from media_info import (
     _detect_codec_from_formats,
     _extract_dolby_vision_profile,
     _safe_extract_track_attribute,
+    extract_audio_codec,
+    extract_channels,
     get_resolution_from_size,
 )
 
@@ -233,3 +238,106 @@ class TestSafeExtractTrackAttribute:
         track = MagicMock()
         track.format = None
         assert _safe_extract_track_attribute(track, "format") == ""
+
+
+# ============================================================================
+# extract_audio_codec / extract_channels (with simple duck-typed tracks)
+# ============================================================================
+
+
+def _audio_track(**kwargs: Any) -> Track:
+    """Build a minimal duck-typed track; missing attributes raise AttributeError."""
+    return cast(Track, SimpleNamespace(**kwargs))
+
+
+class TestExtractAudioCodec:
+    def test_plain_dts(self):
+        track = _audio_track(
+            format="DTS", commercial_name="DTS", codec_id="A_DTS", channel_s=2
+        )
+        assert extract_audio_codec(track) == "DTS.2.0"
+
+    def test_dts_hd_master_audio(self):
+        track = _audio_track(
+            format="DTS",
+            commercial_name="DTS-HD Master Audio",
+            codec_id="A_DTS",
+            channel_s=6,
+        )
+        assert extract_audio_codec(track) == "DTS-HD MA.5.1"
+
+    def test_dts_hd_high_resolution(self):
+        track = _audio_track(
+            format="DTS",
+            commercial_name="DTS-HD High Resolution Audio",
+            codec_id="A_DTS",
+            channel_s=6,
+        )
+        assert extract_audio_codec(track) == "DTS-HD.5.1"
+
+    def test_dts_x(self):
+        track = _audio_track(
+            format="DTS", commercial_name="DTS:X", codec_id="A_DTS", channel_s=8
+        )
+        assert extract_audio_codec(track) == "DTS-X.7.1"
+
+    def test_dts_express_is_not_dts_x(self):
+        # Regression: a bare "x" check used to match "DTS Express".
+        track = _audio_track(
+            format="DTS",
+            commercial_name="DTS Express",
+            codec_id="A_DTS",
+            channel_s=2,
+        )
+        assert extract_audio_codec(track) == "DTS.2.0"
+
+    def test_pcm_from_codec_id(self):
+        # Real MediaInfo data for a PCM track: format="PCM",
+        # codec_id="A_PCM/INT/LIT".
+        track = _audio_track(
+            format="PCM",
+            commercial_name="PCM",
+            codec_id="A_PCM/INT/LIT",
+            format_settings="Little / Signed",
+            channel_s=2,
+        )
+        assert extract_audio_codec(track) == "PCM.2.0"
+
+    def test_lpcm(self):
+        track = _audio_track(format="LPCM", codec_id="A_PCM/INT/BIG", channel_s=6)
+        assert extract_audio_codec(track) == "PCM.5.1"
+
+    def test_truehd_atmos(self):
+        track = _audio_track(
+            format="MLP FBA",
+            commercial_name="Dolby Atmos",
+            codec_id="A_TRUEHD",
+            channel_s=8,
+        )
+        assert extract_audio_codec(track) == "TrueHD.Atmos.7.1"
+
+    def test_unknown_codec_raises(self):
+        with pytest.raises(ValueError):
+            extract_audio_codec(_audio_track(format="Vorbis"))
+
+
+class TestExtractChannels:
+    def test_mono(self):
+        assert extract_channels(_audio_track(channel_s=1)) == "1.0"
+
+    def test_stereo(self):
+        assert extract_channels(_audio_track(channel_s=2)) == "2.0"
+
+    def test_five_one(self):
+        assert extract_channels(_audio_track(channel_s=6)) == "5.1"
+
+    def test_seven_one(self):
+        assert extract_channels(_audio_track(channel_s=8)) == "7.1"
+
+    def test_from_channel_layout(self):
+        track = _audio_track(channel_layout="C L R Ls Rs LFE")
+        assert extract_channels(track) == "5.1"
+
+    def test_unknown_channel_count_raises(self):
+        with pytest.raises(ValueError):
+            extract_channels(_audio_track(channel_s=4))

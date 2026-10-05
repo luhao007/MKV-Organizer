@@ -10,6 +10,7 @@ from config import (
     CODECS,
     EDITION_PATTERN,
     EDITIONS,
+    EPISODE_TAIL_PATTERN,
     EXTRA,
     HDR,
     IDENTIFIER_PATTERN,
@@ -44,9 +45,17 @@ logger = get_logger(__name__)
 # Anime episode numbers are formatted as zero-padded 4-digit numbers (0001...).
 ANIME_EPISODE_WIDTH: Final = 4
 
-# A standalone run of digits that is NOT glued to letters (so "1080p", "H264"
-# or "FDB1F25C" are ignored, while "0123" / "5" / "1" are kept as candidates).
-_NUMERIC_TOKEN_RE: Final = re.compile(r"(?<![A-Za-z0-9])(?P<num>\d+)(?![A-Za-z0-9])")
+# A standalone run of digits - optionally followed by a release-version suffix
+# such as "v2" ("1077v2") - that is NOT glued to letters, so "1080p", "H264"
+# or "FDB1F25C" are ignored while "0123" / "1077v2" / "5" are kept.
+_NUMERIC_TOKEN_RE: Final = re.compile(
+    r"(?<![A-Za-z0-9])(?P<num>\d+)(?:[vV]\d+)?(?![A-Za-z0-9])"
+)
+
+# A merged release never spans dozens of episodes.  A larger "range" means the
+# text after the episode marker was misread (a title or a metadata tag), so such
+# a candidate is rejected instead of producing a 600-episode filename.
+MAX_RANGE_EPISODES: Final = 12
 
 
 # Known metadata tokens used to tell "release tags" apart from noise brackets.
@@ -177,17 +186,24 @@ def extract_release_group(stem: str) -> Optional[str]:
     return None
 
 
-def extract_season_episode(text: str) -> tuple[str, str, str, str]:
+def extract_season_episode(text: str) -> tuple[str, str, list[str], str, str]:
     """
     Extract season and episode numbers.
 
+    A single file may contain several episodes (a "merged" release).  Both the
+    exact chain (``S03E01E04`` = episodes 1 and 4) and the range form
+    (``S01E01-E04`` / ``S01E01-04`` = episodes 1 to 4) are supported.
+
     Returns:
-        Tuple of (season_str, episode_str, left_text, right_text)
-        Season/episode are zero-padded to 2 digits if found.
+        Tuple of (season_str, episode_str, episodes, left_text, right_text).
+        Season/episode are zero-padded to 2 digits if found and ``episodes``
+        lists every episode number the file contains (primary episode first).
     """
     match = SEASON_EPISODE_PATTERN.search(text)
     if not match:
-        logger.error(f"No season/episode pattern found in filename: {text}")
+        # The caller decides how loud this is (organizer logs one warning per
+        # skipped file), so no error log here.
+        logger.debug(f"No season/episode pattern found in filename: {text}")
         raise ValueError("No season/episode pattern found")
 
     season = match.group("season_s") or match.group("season_x")
@@ -198,7 +214,57 @@ def extract_season_episode(text: str) -> tuple[str, str, str, str]:
     left = text[: match.start()]
     right = text[match.end() :]
 
-    return season.zfill(2), episode.zfill(2), left, right
+    episodes, right = _extract_episode_list(episode.zfill(2), right)
+
+    return season.zfill(2), episodes[0], episodes, left, right
+
+
+def _extract_episode_list(first_episode: str, right: str) -> tuple[list[str], str]:
+    """
+    Read the extra episode numbers of a merged marker out of ``right``.
+
+    ``right`` is everything that follows the first ``SxxExx`` marker, so the
+    supported forms look like::
+
+        "S03E01E04"     -> ["01", "04"]              (exact episodes)
+        "S01E01E02E03"  -> ["01", "02", "03"]
+        "S01E01-E04"    -> ["01", "02", "03", "04"]  (contiguous range)
+        "S01E01-04"     -> ["01", "02", "03", "04"]
+
+    Args:
+        first_episode: The (already padded) first episode number.
+        right: Text following the first episode marker.
+
+    Returns:
+        Tuple of (all episode numbers, text remaining after the marker).
+    """
+    match = EPISODE_TAIL_PATTERN.match(right)
+    if not match:
+        return [first_episode], right
+
+    tail = match.group("tail")
+    remaining = right[match.end() :]
+
+    # Keep the numbering width of the first episode (anime uses 4 digits).
+    first = int(first_episode)
+    width = max(2, len(first_episode))
+
+    numbers = [first]
+    if "-" in tail:
+        # Range: "S01E01-E04"/"S01E01-04" -> every episode up to the end.
+        end_match = re.search(r"\d+", tail)
+        end = int(end_match.group()) if end_match else first
+        if 0 < end - first <= MAX_RANGE_EPISODES:
+            numbers = list(range(first, end + 1))
+        else:
+            # Implausible span (e.g. a resolution misread as an episode) -
+            # leave the text alone instead of inventing hundreds of episodes.
+            logger.debug(f"Ignoring implausible episode range in '{tail}'")
+            return [first_episode], right
+    else:
+        numbers += [int(num) for num in re.findall(r"\d+", tail)]
+
+    return [f"{num:0{width}d}" for num in numbers], remaining
 
 
 def extract_movie_name(text: str) -> tuple[tuple[str, str], str]:
@@ -432,13 +498,15 @@ def _parse_flattened(fn: str, original_filename: str, is_show: bool) -> ParsedFi
     release_group, stem = _extract_through_pattern_base(RELEASE_GROUP_PATTERN, stem)
 
     if is_show:
-        # Extract season and episode
-        season, episode, show_name, unparsed = extract_season_episode(stem)
-        logger.debug(f"Found season: {season}, episode: {episode}")
+        # Extract season and episode(s) - a merged release may hold several
+        # episodes (e.g. "S03E01E04").
+        season, episode, episodes, show_name, unparsed = extract_season_episode(stem)
+        logger.debug(f"Found season: {season}, episodes: {episodes}")
         year = ""
     else:
         # Grab the year of a movie
         season, episode = "", ""
+        episodes = []
         (show_name, year), unparsed = extract_movie_name(stem)
 
     # Extract show name (everything before SxxEyy)
@@ -500,6 +568,7 @@ def _parse_flattened(fn: str, original_filename: str, is_show: bool) -> ParsedFi
         season=season,
         episode=episode,
         title=title,
+        episodes=episodes if len(episodes) > 1 else None,
         resolution=resolution,
         codec=codec,
         source=source,
@@ -532,6 +601,11 @@ def parse_filename(
     2. "Air.Crash.Investigations.S01E01 Unlocking Disaster (United Airlines, Flight 811).avi"
     3. Anime (single season, no marker):
        "Detective Conan - 0123 [1080p][Multiple Subtitle][FDB1F25C].mkv"
+
+    A file may also contain several episodes (a "merged" release).  Both the
+    exact chain ("S03E01E04" = episodes 1 and 4) and the range form
+    ("S01E01-E04" = episodes 1 to 4) are supported; the numbers are collected
+    in ``ParsedFileInfo.episodes``.
 
     Args:
         filename: The video filename.

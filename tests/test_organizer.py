@@ -5,12 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from models import FileDefinition, ParsedFileInfo
+from config import EPISODE_NAME_FILE
+from models import FileDefinition, FileOrganization, ParsedFileInfo
 from organizer import (
+    apply_episode_names_from_file,
     build_new_filename,
     build_normalized_folder_name,
     build_season_episode_key,
     check_file_type,
+    check_missing,
     find_best_audio_codec,
     get_all_episode_files,
     get_subtitle_files,
@@ -19,9 +22,12 @@ from organizer import (
     is_meaningless_folder_name,
     is_subtitle_file,
     is_video_file,
+    load_episode_name_index,
     normalize_folders,
     organize_files,
     parse_season_episode_key,
+    rename_files,
+    write_episode_name_index,
 )
 
 # ============================================================================
@@ -181,6 +187,18 @@ class TestFindBestAudioCodec:
     def test_substring_match(self):
         # "Atmos" substring should match "TrueHD.Atmos"
         assert "TrueHD.Atmos" in find_best_audio_codec(["TrueHD.Atmos.7.1", "AAC"])
+
+    def test_dts_hd_ma_over_plain_dts(self):
+        # Regression: generic "DTS" must not win over "DTS-HD MA" just because
+        # it matched the substring first in an unordered set.
+        assert find_best_audio_codec(["DTS.2.0", "DTS-HD MA.5.1"]) == "DTS-HD MA.5.1"
+        assert find_best_audio_codec(["DTS-HD MA.5.1", "DTS.2.0"]) == "DTS-HD MA.5.1"
+
+    def test_dts_hd_over_plain_dts(self):
+        assert find_best_audio_codec(["DTS.2.0", "DTS-HD.5.1"]) == "DTS-HD.5.1"
+
+    def test_pcm_beats_lossy(self):
+        assert find_best_audio_codec(["AAC", "PCM.2.0"]) == "PCM.2.0"
 
 
 # ============================================================================
@@ -499,3 +517,246 @@ class TestNormalizeFoldersMovies:
 
         assert count == 0
         assert os.listdir(tmp_path) == ["Show.A"]
+
+
+# ============================================================================
+# Merged (multi-episode) files
+# ============================================================================
+
+
+def _merged_file_def(
+    episode: str = "01",
+    episodes: list[str] | None = None,
+    title: str = "",
+    extension: str = "mkv",
+) -> FileDefinition:
+    return FileDefinition(
+        parsed=ParsedFileInfo(
+            show_name="The Penguins of Madagascar",
+            season="03",
+            episode=episode,
+            episodes=episodes,
+            title=title,
+            extension=extension,
+        ),
+        folder="/fake",
+        filename=f"/fake/Show.S03E{episode}.{extension}",
+        is_media=True,
+    )
+
+
+class TestMergedEpisodesOrganize:
+    def test_merged_file_keeps_all_episode_numbers(self, tmp_path: Path) -> None:
+        from organizer import organize_files
+
+        (
+            tmp_path / "Show.S03E01E04.Feline.Fervor.Action.Reaction.1080p.mkv"
+        ).write_text("", encoding="utf-8")
+        (tmp_path / "Show.S03E05E06.1080p.mkv").write_text("", encoding="utf-8")
+
+        organized = organize_files(str(tmp_path), is_show=True)
+
+        episodes = organized["Show"]["seasons"]["03"]
+        assert set(episodes.keys()) == {"01", "05"}
+        assert episodes["01"]["mkv"].parsed.all_episodes == ["01", "04"]
+        assert episodes["05"]["mkv"].parsed.all_episodes == ["05", "06"]
+
+    def test_merged_file_is_renamed_with_full_marker(self) -> None:
+        file_def = _merged_file_def(
+            episode="01",
+            episodes=["01", "04"],
+            title="Feline Fervor & Action Reaction",
+        )
+        name = build_new_filename(file_def, include_identifier=False)
+        assert name.startswith("The.Penguins.of.Madagascar.S03E01E04.")
+        assert "Feline.Fervor.&.Action.Reaction" in name
+
+    def test_subtitle_of_merged_file_follows_marker(self) -> None:
+        file_def = _merged_file_def(episode="01", episodes=["01", "04"])
+        file_def.parsed.extension = "srt"
+        file_def.parsed.lang = "chs"
+        file_def.is_subtitle = True
+        file_def.is_media = False
+
+        assert "S03E01E04" in build_new_filename(file_def)
+
+
+class TestEpisodeNameIndexMerged:
+    def _organized(self, folder: str) -> FileOrganization:
+        file_def = _merged_file_def(episode="01", episodes=["01", "04"])
+        file_def.folder = folder
+        return {
+            "The Penguins of Madagascar": {
+                "folder": folder,
+                "seasons": {"03": {"01": {"mkv": file_def}}},
+            }
+        }
+
+    def _only_file(self, organized: FileOrganization) -> FileDefinition:
+        return organized["The Penguins of Madagascar"]["seasons"]["03"]["01"]["mkv"]
+
+    def test_index_lists_every_contained_episode(self, tmp_path: Path) -> None:
+        organized = self._organized(str(tmp_path))
+        self._only_file(organized).parsed.title = "Feline Fervor & Action Reaction"
+
+        written = write_episode_name_index(str(tmp_path), organized)
+
+        assert len(written) == 1
+        index = load_episode_name_index(str(tmp_path))
+        assert index["03|01"] == "Feline Fervor & Action Reaction"
+        assert index["03|04"] == "Feline Fervor & Action Reaction"
+
+    def test_write_preserves_existing_full_index(self, tmp_path: Path) -> None:
+        """A local (no TMDB) run must not shrink a complete index."""
+        (tmp_path / EPISODE_NAME_FILE).write_text(
+            "The Penguins of Madagascar\n"
+            "03|01|Feline Fervor\n"
+            "03|02|King Me\n"
+            "03|04|Action Reaction\n",
+            encoding="utf-8",
+        )
+        organized = self._organized(str(tmp_path))
+        self._only_file(organized).parsed.title = "Feline Fervor & Action Reaction"
+
+        written = write_episode_name_index(str(tmp_path), organized)
+
+        assert written == []
+        index = load_episode_name_index(str(tmp_path))
+        assert set(index) == {"name", "03|01", "03|02", "03|04"}
+        assert index["03|02"] == "King Me"
+
+    def test_write_adds_local_episodes_missing_from_index(self, tmp_path: Path) -> None:
+        (tmp_path / EPISODE_NAME_FILE).write_text(
+            "The Penguins of Madagascar\n03|02|King Me\n", encoding="utf-8"
+        )
+        organized = self._organized(str(tmp_path))
+        self._only_file(organized).parsed.title = "Feline Fervor & Action Reaction"
+
+        written = write_episode_name_index(str(tmp_path), organized)
+
+        assert len(written) == 1
+        index = load_episode_name_index(str(tmp_path))
+        assert index["03|01"] == "Feline Fervor & Action Reaction"
+        assert index["03|04"] == "Feline Fervor & Action Reaction"
+        assert index["03|02"] == "King Me"
+
+    def test_apply_joins_names_of_all_episodes(self, tmp_path: Path) -> None:
+        (tmp_path / EPISODE_NAME_FILE).write_text(
+            "The Penguins of Madagascar\n"
+            "03|01|Feline Fervor\n"
+            "03|02|King Me\n"
+            "03|04|Action Reaction\n",
+            encoding="utf-8",
+        )
+        organized = self._organized(str(tmp_path))
+
+        assert apply_episode_names_from_file(str(tmp_path), organized) is True
+
+        assert (
+            self._only_file(organized).parsed.title == "Feline Fervor & Action Reaction"
+        )
+
+    def test_roundtrip_index_does_not_duplicate_title(self, tmp_path: Path) -> None:
+        """Writing a joined title per episode and reading it back is stable."""
+        (tmp_path / EPISODE_NAME_FILE).write_text(
+            "The Penguins of Madagascar\n"
+            "03|01|Feline Fervor & Action Reaction\n"
+            "03|04|Feline Fervor & Action Reaction\n",
+            encoding="utf-8",
+        )
+        organized = self._organized(str(tmp_path))
+
+        assert apply_episode_names_from_file(str(tmp_path), organized) is True
+
+        assert (
+            self._only_file(organized).parsed.title == "Feline Fervor & Action Reaction"
+        )
+
+    def test_check_missing_counts_merged_episodes_as_present(
+        self, tmp_path: Path
+    ) -> None:
+        organized = self._organized(str(tmp_path))
+        index = {
+            "name": "The Penguins of Madagascar",
+            "03|01": "Feline Fervor",
+            "03|04": "Action Reaction",
+            "03|02": "King Me",
+        }
+
+        missing = check_missing(organized, index)
+
+        # 03|01 and 03|04 are covered by the merged file, 03|02 is missing.
+        assert missing == {"03|02"}
+
+
+# ============================================================================
+# rename_files safety guards
+# ============================================================================
+
+
+def _renamable_file_def(folder: str, episode: str, title: str = "Title"):
+    name = f"Show.S01E{episode} - Bad Name [1080p].mkv"
+    path = Path(folder) / name
+    path.write_text("", encoding="utf-8")
+    parsed = ParsedFileInfo(
+        show_name="Show",
+        season="01",
+        episode=episode,
+        title=title,
+        # Complete metadata -> fill_missing_metadata does not touch the file.
+        resolution="1080p",
+        codec="x264",
+        hdr="SDR",
+        audio_codecs=["AAC"],
+        extension="mkv",
+    )
+    return FileDefinition(
+        parsed=parsed, folder=folder, filename=str(path), is_media=True
+    )
+
+
+class TestRenameGuards:
+    def test_overlong_new_name_is_refused(self, tmp_path: Path) -> None:
+        """A name too long for the file system is refused, not attempted."""
+        file_def = _renamable_file_def(str(tmp_path), "01", title="X" * 400)
+        organized: FileOrganization = {
+            "Show": {
+                "folder": str(tmp_path),
+                "seasons": {"01": {"01": {"mkv": file_def}}},
+            }
+        }
+
+        rename_files(organized, dry_run=False)
+
+        assert Path(file_def.filename).exists()
+        assert os.listdir(tmp_path) == [Path(file_def.filename).name]
+
+    def test_one_failed_rename_does_not_abort_the_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import organizer as organizer_module
+
+        first = _renamable_file_def(str(tmp_path), "01")
+        second = _renamable_file_def(str(tmp_path), "02")
+        expected_second = build_new_filename(second)
+        organized: FileOrganization = {
+            "Show": {
+                "folder": str(tmp_path),
+                "seasons": {
+                    "01": {"01": {"mkv": first}, "02": {"mkv": second}},
+                },
+            }
+        }
+
+        real_rename = os.rename
+
+        def flaky_rename(src: str, dst: str):
+            if src == first.filename:
+                raise OSError("rename: dst too long for Windows")
+            return real_rename(src, dst)
+
+        monkeypatch.setattr(organizer_module.os, "rename", flaky_rename)
+        rename_files(organized, dry_run=False)
+
+        # The second file was still renamed.
+        assert (tmp_path / expected_second).exists()
